@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import AppShell from "@/components/AppShell";
+import { OutlineIcon } from "@/components/OutlineIcon";
+import { supabase } from "@/lib/supabaseClient";
 
 type ProfessorInfo = {
   professor_name: string;
@@ -99,58 +102,328 @@ function hasReply(item: BoardItem) {
   return ["Replied", "Positive", "Rejected", "Closed"].includes(replyStatus);
 }
 
-function getBadgeClass(status: string) {
-  if (status === "Due") {
-    return "border-orange-500/30 bg-orange-400/10 text-orange-300";
-  }
+function getStatusClass(status: string) {
+  if (status === "Due") return "bg-[#fff2d8] text-[#171a21]";
+  if (status === "Upcoming") return "bg-[#dbe6ff] text-[#171a21]";
+  if (status === "Positive") return "bg-[#dcf5e7] text-[#171a21]";
+  if (status === "Replied") return "bg-[#dbe6ff] text-[#171a21]";
+  if (status === "Rejected") return "bg-red-50 text-red-700";
+  if (status === "Closed") return "bg-[#eee8df] text-[#171a21]";
+  if (status === "Sent") return "bg-[#dcf5e7] text-[#171a21]";
+  if (status === "Scheduled") return "bg-[#dbe6ff] text-[#171a21]";
+  if (status === "Trigger Created") return "bg-[#f4dceb] text-[#171a21]";
+  if (status === "Failed") return "bg-red-50 text-red-700";
 
-  if (status === "Upcoming") {
-    return "border-blue-500/30 bg-blue-400/10 text-blue-300";
-  }
+  return "bg-white text-[#657187]";
+}
 
-  if (status === "Positive") {
-    return "border-emerald-500/30 bg-emerald-400/10 text-emerald-300";
-  }
+function getStatusIcon(status: string) {
+  if (status === "Due") return "warning";
+  if (status === "Upcoming") return "clock";
+  if (status === "Positive") return "check";
+  if (status === "Replied") return "mail";
+  if (status === "Rejected") return "x";
+  if (status === "Closed") return "check";
+  if (status === "Scheduled") return "calendar";
+  if (status === "Trigger Created") return "gear";
+  if (status === "Sent") return "check";
+  if (status === "Failed") return "warning";
 
-  if (status === "Replied") {
-    return "border-cyan-500/30 bg-cyan-400/10 text-cyan-300";
-  }
+  return "repeat";
+}
 
-  if (status === "Rejected") {
-    return "border-red-500/30 bg-red-400/10 text-red-300";
-  }
+function FieldLabel({
+  title,
+  required,
+}: {
+  title: string;
+  required?: boolean;
+}) {
+  return (
+    <label className="label">
+      {title}
+      {required ? <span className="ml-1 text-red-500">*</span> : null}
+    </label>
+  );
+}
 
-  if (status === "Closed") {
-    return "border-slate-600 bg-slate-800 text-slate-300";
-  }
+function StatBox({
+  label,
+  value,
+  icon,
+  className,
+}: {
+  label: string;
+  value: number;
+  icon: "repeat" | "calendar" | "mail" | "warning" | "check";
+  className: string;
+}) {
+  return (
+    <div className={`rounded-[24px] p-4 ${className}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="icon-box h-10 w-10 bg-white/85">
+          <OutlineIcon name={icon} className="h-4 w-4" />
+        </div>
 
-  if (status === "Sent") {
-    return "border-emerald-500/30 bg-emerald-400/10 text-emerald-300";
-  }
+        <p className="text-2xl font-semibold text-[#171a21]">{value}</p>
+      </div>
 
-  if (status === "Scheduled") {
-    return "border-blue-500/30 bg-blue-400/10 text-blue-300";
-  }
+      <p className="mt-3 text-sm font-semibold text-[#171a21]">{label}</p>
+    </div>
+  );
+}
 
-  if (status === "Trigger Created") {
-    return "border-purple-500/30 bg-purple-400/10 text-purple-300";
-  }
+function MiniEmailCard({
+  email,
+  label,
+}: {
+  email: ChildEmail;
+  label: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-black/8 bg-white p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusClass(
+            email.status
+          )}`}
+        >
+          <OutlineIcon
+            name={getStatusIcon(email.status)}
+            className="h-3 w-3"
+          />
+          {email.status}
+        </span>
 
-  if (status === "Failed") {
-    return "border-red-500/30 bg-red-400/10 text-red-300";
-  }
+        <span className="rounded-full bg-[#f6f8fc] px-2.5 py-1 text-xs font-medium text-[#657187]">
+          {label}
+        </span>
+      </div>
 
-  if (status === "No Reply") {
-    return "border-slate-700 bg-slate-800 text-slate-300";
-  }
+      <p className="mt-3 line-clamp-2 text-sm font-semibold text-[#171a21]">
+        {email.subject}
+      </p>
 
-  return "border-slate-700 bg-slate-800 text-slate-300";
+      <p className="mt-1 text-xs text-[#657187]">
+        Send time: {formatDateTime(email.send_datetime)}
+      </p>
+    </div>
+  );
+}
+
+function FollowupCard({
+  item,
+  type,
+  onScheduleFollowup,
+  onPositiveReply,
+  onRepliedReply,
+  onRejected,
+  onClose,
+  onUndoNoReply,
+}: {
+  item: BoardItem;
+  type: "no_reply" | "scheduled" | "reply";
+  onScheduleFollowup: (item: BoardItem) => void;
+  onPositiveReply: (item: BoardItem) => void;
+  onRepliedReply: (item: BoardItem) => void;
+  onRejected: (item: BoardItem) => void;
+  onClose: (item: BoardItem) => void;
+  onUndoNoReply: (item: BoardItem) => void;
+}) {
+  const reminderStatus = getReminderStatus(item);
+  const dueDate = getFollowupDueDate(item);
+  const replyStatus = getReplyStatus(item);
+
+  return (
+    <article className="rounded-[26px] border border-black/8 bg-[#f9fbff] p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            {type === "no_reply" ? (
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
+                  reminderStatus
+                )}`}
+              >
+                <OutlineIcon
+                  name={getStatusIcon(reminderStatus)}
+                  className="h-3.5 w-3.5"
+                />
+                {reminderStatus}
+              </span>
+            ) : null}
+
+            {type === "scheduled" ? (
+              <span className="rounded-full bg-[#f4dceb] px-3 py-1 text-xs font-semibold text-[#171a21]">
+                Follow-up scheduled
+              </span>
+            ) : null}
+
+            {type === "reply" ? (
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
+                  replyStatus
+                )}`}
+              >
+                <OutlineIcon
+                  name={getStatusIcon(replyStatus)}
+                  className="h-3.5 w-3.5"
+                />
+                {replyStatus}
+              </span>
+            ) : null}
+
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[#657187]">
+              Follow-up after {item.followup_after_days} days
+            </span>
+
+            {item.professors?.category ? (
+              <span className="rounded-full bg-[#dbe6ff] px-3 py-1 text-xs font-medium text-[#171a21]">
+                {item.professors.category}
+              </span>
+            ) : null}
+          </div>
+
+          <h3 className="mt-4 break-words text-lg font-semibold leading-7 text-[#171a21]">
+            {item.subject}
+          </h3>
+
+          <p className="mt-1 text-sm leading-6 text-[#657187]">
+            {item.professors?.professor_name || "Unknown contact"} ·{" "}
+            {item.professors?.email || "No email"}
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {item.professors?.university ? (
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[#657187]">
+                {item.professors.university}
+              </span>
+            ) : null}
+
+            {item.professors?.research_area ? (
+              <span className="rounded-full bg-[#dcf5e7] px-3 py-1 text-xs font-medium text-[#171a21]">
+                {item.professors.research_area}
+              </span>
+            ) : null}
+
+            <span className="rounded-full bg-[#f6f8fc] px-3 py-1 text-xs font-medium text-[#657187]">
+              Original sent: {formatDateTime(item.sent_time)}
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="rounded-2xl border border-black/8 bg-white p-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#657187]">
+                Follow-up due
+              </p>
+              <p className="mt-1 text-sm text-[#171a21]">
+                {dueDate ? formatDateTime(dueDate.toISOString()) : "No sent time"}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-black/8 bg-white p-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#657187]">
+                Original status
+              </p>
+              <p className="mt-1 text-sm text-[#171a21]">{item.status}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="w-full space-y-2 sm:w-52">
+          {type === "no_reply" ? (
+            <button
+              onClick={() => onScheduleFollowup(item)}
+              className="w-full rounded-2xl border border-black/8 bg-[#dbe6ff] px-3 py-2 text-xs font-semibold text-[#171a21] transition hover:bg-[#cbd9ff]"
+              type="button"
+            >
+              Schedule Follow-up
+            </button>
+          ) : null}
+
+          {type !== "reply" ? (
+            <>
+              <button
+                onClick={() => onPositiveReply(item)}
+                className="w-full rounded-2xl border border-black/8 bg-[#dcf5e7] px-3 py-2 text-xs font-semibold text-[#171a21] transition hover:bg-[#c9f1d9]"
+                type="button"
+              >
+                Positive + Reply
+              </button>
+
+              <button
+                onClick={() => onRepliedReply(item)}
+                className="w-full rounded-2xl border border-black/8 bg-white px-3 py-2 text-xs font-semibold text-[#171a21] transition hover:bg-[#f6f8fc]"
+                type="button"
+              >
+                Replied + Reply
+              </button>
+
+              <button
+                onClick={() => onRejected(item)}
+                className="w-full rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                type="button"
+              >
+                Rejected / Close
+              </button>
+            </>
+          ) : null}
+
+          {type === "reply" ? (
+            <>
+              <button
+                onClick={() => onUndoNoReply(item)}
+                className="w-full rounded-2xl border border-black/8 bg-[#eee8df] px-3 py-2 text-xs font-semibold text-[#171a21] transition hover:bg-[#e2dacd]"
+                type="button"
+              >
+                Undo → No Reply
+              </button>
+
+              <button
+                onClick={() => onClose(item)}
+                className="w-full rounded-2xl border border-black/8 bg-white px-3 py-2 text-xs font-semibold text-[#171a21] transition hover:bg-[#f6f8fc]"
+                type="button"
+              >
+                Mark Closed
+              </button>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      {item.followupEmails.length > 0 ? (
+        <div className="mt-4 space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#657187]">
+            Linked follow-up emails
+          </p>
+
+          {item.followupEmails.map((email) => (
+            <MiniEmailCard key={email.id} email={email} label="Follow-up" />
+          ))}
+        </div>
+      ) : null}
+
+      {item.customReplyEmails.length > 0 ? (
+        <div className="mt-4 space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#657187]">
+            Linked custom replies
+          </p>
+
+          {item.customReplyEmails.map((email) => (
+            <MiniEmailCard key={email.id} email={email} label="Custom reply" />
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
 }
 
 export default function FollowupsPage() {
   const router = useRouter();
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
   const [items, setItems] = useState<BoardItem[]>([]);
   const [templates, setTemplates] = useState<FollowupTemplate[]>([]);
 
@@ -178,6 +451,7 @@ export default function FollowupsPage() {
   const followupScheduledItems = useMemo(() => {
     return items.filter((item) => {
       const hasFollowup = item.followupEmails.length > 0;
+
       return !hasReply(item) && hasFollowup && matchesSearch(item, searchText);
     });
   }, [items, searchText]);
@@ -185,9 +459,14 @@ export default function FollowupsPage() {
   const noReplyYetItems = useMemo(() => {
     return items.filter((item) => {
       const hasFollowup = item.followupEmails.length > 0;
+
       return !hasReply(item) && !hasFollowup && matchesSearch(item, searchText);
     });
   }, [items, searchText]);
+
+  const totalDue = noReplyYetItems.filter(
+    (item) => getReminderStatus(item) === "Due"
+  ).length;
 
   useEffect(() => {
     async function initialize() {
@@ -205,7 +484,9 @@ export default function FollowupsPage() {
       }
 
       const currentUserId = data.session.user.id;
+
       setUserId(currentUserId);
+      setUserEmail(data.session.user.email ?? null);
 
       await Promise.all([
         loadBoardItems(currentUserId),
@@ -349,6 +630,7 @@ export default function FollowupsPage() {
 
   function getMinimumSafeDate() {
     const now = new Date();
+
     return new Date(now.getTime() + 35 * 60 * 1000);
   }
 
@@ -534,7 +816,7 @@ export default function FollowupsPage() {
     }
   }
 
-  async function handleScheduleComposer(e: React.FormEvent<HTMLFormElement>) {
+  async function handleScheduleComposer(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (!userId || !activeEmail || !composerMode) {
@@ -677,593 +959,473 @@ export default function FollowupsPage() {
     }
   }
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    router.push("/login");
-  }
-
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
-        Loading follow-up board...
-      </main>
+      <AppShell activePage="followups" email={userEmail}>
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <div className="soft-card bg-white p-8 text-center">
+            <div className="icon-box mx-auto h-12 w-12 bg-[#f4dceb]">
+              <OutlineIcon name="repeat" />
+            </div>
+
+            <p className="page-eyebrow mt-4">Follow-ups</p>
+
+            <h1 className="mt-2 text-2xl font-semibold text-black">
+              Loading workflow board
+            </h1>
+
+            <p className="mt-3 text-sm text-[#657187]">
+              Preparing no-reply, scheduled follow-up, and reply status records.
+            </p>
+          </div>
+        </div>
+      </AppShell>
     );
   }
 
-  const totalDue = noReplyYetItems.filter(
-    (item) => getReminderStatus(item) === "Due"
-  ).length;
-
   return (
-    <main className="min-h-screen bg-slate-950 text-white p-8">
-      <div className="mx-auto max-w-7xl">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-6">
-          <div>
-            <h1 className="text-3xl font-bold">Follow-up Workflow Board</h1>
-            <p className="mt-2 text-slate-400">
-              Reminder active means MailMotive should remind you after the chosen
-              number of days. It does not mean a follow-up email is already
-              scheduled.
-            </p>
-          </div>
+    <AppShell activePage="followups" email={userEmail}>
+      <header className="flex flex-wrap items-start justify-between gap-5">
+        <div>
+          <p className="page-eyebrow">Follow-up workflow</p>
 
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/dashboard"
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Dashboard
-            </Link>
+          <h1 className="page-title mt-2">Follow-ups</h1>
 
-            <Link
-              href="/emails"
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Emails
-            </Link>
+          <p className="page-description">
+            Manage no-reply outreach, scheduled follow-ups, positive replies,
+            rejected responses, and custom replies from one workflow board.
+          </p>
+        </div>
 
-            <Link
-              href="/outreach/new"
-              className="rounded-xl bg-blue-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-blue-300"
-            >
-              New Outreach
-            </Link>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              if (userId) {
+                loadBoardItems(userId);
+                loadFollowupTemplates(userId);
+              }
+            }}
+            className="btn btn-light"
+            type="button"
+          >
+            <OutlineIcon name="refresh" className="mr-2 h-4 w-4" />
+            Refresh
+          </button>
 
-            <button
-              onClick={() => loadBoardItems()}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Refresh
-            </button>
+          <Link href="/outreach/new" className="btn btn-dark">
+            <OutlineIcon name="compose" className="mr-2 h-4 w-4" />
+            New Outreach
+          </Link>
+        </div>
+      </header>
 
-            <button
-              onClick={handleLogout}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Logout
-            </button>
-          </div>
-        </header>
+      <div className="mt-6 flex flex-wrap gap-2">
+        <span className="status-pill bg-[#fff2d8]">{totalDue} due</span>
+        <span className="status-pill bg-[#dbe6ff]">
+          {noReplyYetItems.length} no reply
+        </span>
+        <span className="status-pill bg-[#f4dceb]">
+          {followupScheduledItems.length} scheduled
+        </span>
+        <span className="status-pill bg-[#dcf5e7]">
+          {replyReceivedItems.length} replied
+        </span>
+      </div>
 
-        {message && (
-          <div className="mt-6 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-300">
-            {message}
-          </div>
-        )}
+      {message ? (
+        <div
+          className={`mt-6 rounded-[22px] border p-4 ${
+            message.toLowerCase().includes("successfully") ||
+            message.toLowerCase().includes("marked") ||
+            message.toLowerCase().includes("moved")
+              ? "border-green-200 bg-[#dcf5e7]"
+              : "border-red-200 bg-red-50"
+          }`}
+        >
+          <p className="text-sm font-semibold text-[#171a21]">{message}</p>
+        </div>
+      ) : null}
 
-        <section className="mt-8 grid gap-4 md:grid-cols-4">
-          <div className="rounded-2xl border border-cyan-500/20 bg-cyan-400/10 p-5">
-            <p className="text-sm text-cyan-200">Reply received</p>
-            <h2 className="mt-2 text-3xl font-bold text-cyan-100">
-              {replyReceivedItems.length}
-            </h2>
-            <p className="mt-2 text-xs text-cyan-200/70">
-              Needs custom reply or closure
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-orange-500/20 bg-orange-400/10 p-5">
-            <p className="text-sm text-orange-200">Due now</p>
-            <h2 className="mt-2 text-3xl font-bold text-orange-100">
-              {totalDue}
-            </h2>
-            <p className="mt-2 text-xs text-orange-200/70">
-              Reminder date has passed
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-blue-500/20 bg-blue-400/10 p-5">
-            <p className="text-sm text-blue-200">No reply yet</p>
-            <h2 className="mt-2 text-3xl font-bold text-blue-100">
-              {noReplyYetItems.length}
-            </h2>
-            <p className="mt-2 text-xs text-blue-200/70">
-              No linked follow-up email
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-purple-500/20 bg-purple-400/10 p-5">
-            <p className="text-sm text-purple-200">Follow-up scheduled</p>
-            <h2 className="mt-2 text-3xl font-bold text-purple-100">
-              {followupScheduledItems.length}
-            </h2>
-            <p className="mt-2 text-xs text-purple-200/70">
-              Actual follow-up email exists
-            </p>
-          </div>
-        </section>
-
-        {activeEmail && composerMode && (
-          <section className="mt-8 rounded-2xl border border-blue-500/30 bg-blue-400/10 p-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
+      <section className="mt-8 grid gap-5 xl:grid-cols-[0.78fr_1.22fr]">
+        <aside className="space-y-5">
+          <div className="soft-card bg-white p-6">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-xl font-semibold">
-                  {composerMode === "followup"
-                    ? "Schedule Follow-up from Template"
-                    : "Write Custom Reply"}
+                <p className="page-eyebrow">Board overview</p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+                  Reply health
                 </h2>
-                <p className="mt-1 text-sm text-slate-300">
-                  To: {activeEmail.professors?.professor_name} —{" "}
-                  {activeEmail.professors?.email}
+                <p className="mt-2 text-sm leading-6 text-[#657187]">
+                  Reminder active means the original email needs tracking. It
+                  does not mean a follow-up email already exists.
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={closeComposer}
-                className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-              >
-                Close
-              </button>
+              <div className="icon-box h-12 w-12 bg-[#f4dceb]">
+                <OutlineIcon name="repeat" />
+              </div>
             </div>
 
-            <form onSubmit={handleScheduleComposer} className="mt-6 space-y-4">
-              {composerMode === "followup" && (
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <StatBox
+                label="Due"
+                value={totalDue}
+                icon="warning"
+                className="bg-[#fff2d8]"
+              />
+
+              <StatBox
+                label="No Reply"
+                value={noReplyYetItems.length}
+                icon="mail"
+                className="bg-[#dbe6ff]"
+              />
+
+              <StatBox
+                label="Scheduled"
+                value={followupScheduledItems.length}
+                icon="calendar"
+                className="bg-[#f4dceb]"
+              />
+
+              <StatBox
+                label="Replies"
+                value={replyReceivedItems.length}
+                icon="check"
+                className="bg-[#dcf5e7]"
+              />
+            </div>
+          </div>
+
+          <div className="soft-card bg-[rgba(243,248,255,0.76)] p-6">
+            <p className="page-eyebrow">Search</p>
+
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+              Find record
+            </h2>
+
+            <div className="mt-5">
+              <FieldLabel title="Search follow-ups" />
+
+              <input
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                className="input"
+                placeholder="Search name, email, university, category, subject..."
+              />
+            </div>
+
+            <button
+              onClick={() => setSearchText("")}
+              className="btn btn-light mt-4 w-full"
+              type="button"
+            >
+              Clear search
+            </button>
+          </div>
+
+          <div className="soft-card bg-[#dcf5e7] p-5">
+            <div className="flex items-start gap-3">
+              <div className="icon-box h-10 w-10 bg-white/85">
+                <OutlineIcon name="check" className="h-4 w-4" />
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-[#171a21]">
+                  Correct logic
+                </p>
+
+                <p className="mt-2 text-sm leading-6 text-[#657187]">
+                  Follow-up required means reminder active. A follow-up is only
+                  “scheduled” when a linked email exists with email_kind =
+                  followup.
+                </p>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <section className="space-y-5">
+          {activeEmail && composerMode ? (
+            <form
+              onSubmit={handleScheduleComposer}
+              className="soft-card bg-white p-6"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <label className="mb-1 block text-sm text-slate-300">
-                    Follow-up template
-                  </label>
+                  <p className="page-eyebrow">
+                    {composerMode === "followup"
+                      ? "Schedule follow-up"
+                      : "Schedule custom reply"}
+                  </p>
 
-                  <select
-                    value={selectedTemplateId}
-                    onChange={(e) => handleTemplateChange(e.target.value)}
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-400"
-                  >
-                    <option value="">Choose saved follow-up template...</option>
-                    {templates.map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {template.label}
-                      </option>
-                    ))}
-                    <option value="__new__">+ Add new follow-up template</option>
-                  </select>
+                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+                    {activeEmail.professors?.professor_name || "Selected contact"}
+                  </h2>
+
+                  <p className="mt-2 text-sm leading-6 text-[#657187]">
+                    Original subject: {activeEmail.subject}
+                  </p>
                 </div>
-              )}
 
-              {composerMode === "followup" &&
-                selectedTemplateId === "__new__" && (
-                  <div>
-                    <label className="mb-1 block text-sm text-slate-300">
-                      New template label
-                    </label>
+                <button
+                  onClick={closeComposer}
+                  className="btn btn-light"
+                  type="button"
+                >
+                  Close composer
+                </button>
+              </div>
+
+              <div className="mt-6 grid gap-4 md:grid-cols-2">
+                {composerMode === "followup" ? (
+                  <div className="md:col-span-2">
+                    <FieldLabel title="Template" />
+
+                    <select
+                      value={selectedTemplateId}
+                      onChange={(e) => handleTemplateChange(e.target.value)}
+                      className="select"
+                    >
+                      <option value="">No template / write manually</option>
+
+                      {templates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.label}
+                        </option>
+                      ))}
+
+                      <option value="__new__">+ Save as new template</option>
+                    </select>
+                  </div>
+                ) : null}
+
+                {composerMode === "followup" &&
+                selectedTemplateId === "__new__" ? (
+                  <div className="md:col-span-2">
+                    <FieldLabel title="New template label" />
 
                     <input
                       value={newTemplateLabel}
                       onChange={(e) => setNewTemplateLabel(e.target.value)}
-                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-400"
-                      placeholder="Polite follow-up, Short follow-up..."
+                      className="input"
+                      placeholder="e.g. Polite follow-up after 7 days"
                     />
                   </div>
-                )}
+                ) : null}
 
-              <div>
-                <label className="mb-1 block text-sm text-slate-300">
-                  Subject
-                </label>
+                <div>
+                  <FieldLabel title="Subject" required />
 
-                <input
-                  required
-                  value={replySubject}
-                  onChange={(e) => setReplySubject(e.target.value)}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-400"
-                  placeholder="Subject"
-                />
-              </div>
+                  <input
+                    value={replySubject}
+                    onChange={(e) => setReplySubject(e.target.value)}
+                    className="input"
+                    placeholder="Follow-up: ..."
+                  />
+                </div>
 
-              <div>
-                <label className="mb-1 block text-sm text-slate-300">
-                  Email body
-                </label>
+                <div>
+                  <FieldLabel title="Send date and time" required />
 
-                <textarea
-                  required
-                  value={replyBody}
-                  onChange={(e) => setReplyBody(e.target.value)}
-                  className="min-h-56 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-400"
-                  placeholder="Dear Professor..."
-                />
-              </div>
+                  <input
+                    type="datetime-local"
+                    min={getMinimumDatetimeLocal()}
+                    value={replySendDatetime}
+                    onChange={(e) => setReplySendDatetime(e.target.value)}
+                    className="input"
+                  />
 
-              <div>
-                <label className="mb-1 block text-sm text-slate-300">
-                  Send date and time
-                </label>
+                  <p className="help-text">
+                    Choose at least 35 minutes from now.
+                  </p>
+                </div>
 
-                <input
-                  required
-                  type="datetime-local"
-                  min={getMinimumDatetimeLocal()}
-                  value={replySendDatetime}
-                  onChange={(e) => setReplySendDatetime(e.target.value)}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-400"
-                />
+                <div className="md:col-span-2">
+                  <FieldLabel title="Email body" required />
 
-                <p className="mt-2 text-xs text-slate-500">
-                  Choose at least 35 minutes from now because registration runs
-                  every 30 minutes.
-                </p>
+                  <textarea
+                    value={replyBody}
+                    onChange={(e) => setReplyBody(e.target.value)}
+                    className="textarea min-h-56"
+                    placeholder="Dear Professor..."
+                  />
+                </div>
               </div>
 
               <button
                 disabled={savingComposer}
-                className="rounded-xl bg-emerald-400 px-5 py-3 font-semibold text-slate-950 hover:bg-emerald-300 disabled:opacity-60"
+                className="btn btn-dark mt-5 w-full disabled:cursor-not-allowed disabled:opacity-60"
+                type="submit"
               >
                 {savingComposer
                   ? "Scheduling..."
                   : composerMode === "followup"
-                  ? "Schedule Follow-up"
-                  : "Schedule Custom Reply"}
+                    ? "Schedule Follow-up Email"
+                    : "Schedule Custom Reply"}
               </button>
             </form>
-          </section>
-        )}
+          ) : null}
 
-        <section className="mt-8">
-          <input
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-emerald-400"
-            placeholder="Search professor, email, university, category, research area, subject..."
-          />
-        </section>
+          <div className="soft-card bg-white p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="page-eyebrow">No reply yet</p>
 
-        <section className="mt-8 grid gap-6 xl:grid-cols-3">
-          <WorkflowColumn
-            title="Reply received"
-            description="Professor already replied. Send custom response, undo label, or close."
-            emptyText="No replied records."
-            items={replyReceivedItems}
-            columnType="reply_received"
-            onPositiveReply={openPositiveReply}
-            onRepliedReply={openRepliedReply}
-            onRepliedClose={(item) => updateOutcome(item, "Replied", true)}
-            onRejectedClose={(item) => updateOutcome(item, "Rejected", true)}
-            onClose={(item) => updateOutcome(item, "Closed", true)}
-            onScheduleFollowup={openFollowupComposer}
-            onMarkNoReply={markAsNoReply}
-          />
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+                  Reminder active, no follow-up scheduled
+                </h2>
 
-          <WorkflowColumn
-            title="No reply yet"
-            description="Reminder is active, but no actual follow-up email has been created."
-            emptyText="No no-reply records."
-            items={noReplyYetItems}
-            columnType="no_reply"
-            onPositiveReply={openPositiveReply}
-            onRepliedReply={openRepliedReply}
-            onRepliedClose={(item) => updateOutcome(item, "Replied", true)}
-            onRejectedClose={(item) => updateOutcome(item, "Rejected", true)}
-            onClose={(item) => updateOutcome(item, "Closed", true)}
-            onScheduleFollowup={openFollowupComposer}
-            onMarkNoReply={markAsNoReply}
-          />
+                <p className="mt-2 text-sm leading-6 text-[#657187]">
+                  These contacts have not replied and do not yet have a linked
+                  follow-up email.
+                </p>
+              </div>
 
-          <WorkflowColumn
-            title="Follow-up scheduled"
-            description="An actual linked follow-up email exists. Track it here."
-            emptyText="No scheduled follow-up records."
-            items={followupScheduledItems}
-            columnType="followup_scheduled"
-            onPositiveReply={openPositiveReply}
-            onRepliedReply={openRepliedReply}
-            onRepliedClose={(item) => updateOutcome(item, "Replied", true)}
-            onRejectedClose={(item) => updateOutcome(item, "Rejected", true)}
-            onClose={(item) => updateOutcome(item, "Closed", true)}
-            onScheduleFollowup={openFollowupComposer}
-            onMarkNoReply={markAsNoReply}
-          />
-        </section>
-      </div>
-    </main>
-  );
-}
+              <span className="rounded-full bg-[#dbe6ff] px-3 py-1 text-sm font-semibold text-[#171a21]">
+                {noReplyYetItems.length}
+              </span>
+            </div>
 
-function WorkflowColumn({
-  title,
-  description,
-  emptyText,
-  items,
-  columnType,
-  onPositiveReply,
-  onRepliedReply,
-  onRepliedClose,
-  onRejectedClose,
-  onClose,
-  onScheduleFollowup,
-  onMarkNoReply,
-}: {
-  title: string;
-  description: string;
-  emptyText: string;
-  items: BoardItem[];
-  columnType: "reply_received" | "no_reply" | "followup_scheduled";
-  onPositiveReply: (item: BoardItem) => void;
-  onRepliedReply: (item: BoardItem) => void;
-  onRepliedClose: (item: BoardItem) => void;
-  onRejectedClose: (item: BoardItem) => void;
-  onClose: (item: BoardItem) => void;
-  onScheduleFollowup: (item: BoardItem) => void;
-  onMarkNoReply: (item: BoardItem) => void;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-      <h2 className="text-xl font-semibold">{title}</h2>
-      <p className="mt-1 text-sm text-slate-400">{description}</p>
+            <div className="mt-6 space-y-4">
+              {noReplyYetItems.length === 0 ? (
+                <div className="rounded-[24px] border border-black/8 bg-[#f6f8fc] p-6 text-center">
+                  <p className="text-sm font-semibold text-[#171a21]">
+                    No no-reply records found
+                  </p>
 
-      <div className="mt-5 space-y-4">
-        {items.length === 0 ? (
-          <div className="rounded-xl border border-slate-800 bg-slate-950 p-5 text-sm text-slate-400">
-            {emptyText}
+                  <p className="mt-2 text-sm text-[#657187]">
+                    All reminder-active emails are either replied or already
+                    have follow-ups scheduled.
+                  </p>
+                </div>
+              ) : (
+                noReplyYetItems.map((item) => (
+                  <FollowupCard
+                    key={item.id}
+                    item={item}
+                    type="no_reply"
+                    onScheduleFollowup={openFollowupComposer}
+                    onPositiveReply={openPositiveReply}
+                    onRepliedReply={openRepliedReply}
+                    onRejected={(selected) =>
+                      updateOutcome(selected, "Rejected", true)
+                    }
+                    onClose={(selected) =>
+                      updateOutcome(selected, "Closed", true)
+                    }
+                    onUndoNoReply={markAsNoReply}
+                  />
+                ))
+              )}
+            </div>
           </div>
-        ) : (
-          items.map((item) => (
-            <BoardCard
-              key={item.id}
-              item={item}
-              columnType={columnType}
-              onPositiveReply={onPositiveReply}
-              onRepliedReply={onRepliedReply}
-              onRepliedClose={onRepliedClose}
-              onRejectedClose={onRejectedClose}
-              onClose={onClose}
-              onScheduleFollowup={onScheduleFollowup}
-              onMarkNoReply={onMarkNoReply}
-            />
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
 
-function BoardCard({
-  item,
-  columnType,
-  onPositiveReply,
-  onRepliedReply,
-  onRepliedClose,
-  onRejectedClose,
-  onClose,
-  onScheduleFollowup,
-  onMarkNoReply,
-}: {
-  item: BoardItem;
-  columnType: "reply_received" | "no_reply" | "followup_scheduled";
-  onPositiveReply: (item: BoardItem) => void;
-  onRepliedReply: (item: BoardItem) => void;
-  onRepliedClose: (item: BoardItem) => void;
-  onRejectedClose: (item: BoardItem) => void;
-  onClose: (item: BoardItem) => void;
-  onScheduleFollowup: (item: BoardItem) => void;
-  onMarkNoReply: (item: BoardItem) => void;
-}) {
-  const reminderStatus = getReminderStatus(item);
-  const replyStatus = getReplyStatus(item);
-  const dueDate = getFollowupDueDate(item);
+          <div className="soft-card bg-white p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="page-eyebrow">Follow-up scheduled</p>
 
-  return (
-    <article className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
-      <div className="flex flex-wrap items-center gap-2">
-        {columnType === "reply_received" ? (
-          <span
-            className={`rounded-full border px-3 py-1 text-xs font-semibold ${getBadgeClass(
-              replyStatus
-            )}`}
-          >
-            {replyStatus}
-          </span>
-        ) : (
-          <span
-            className={`rounded-full border px-3 py-1 text-xs font-semibold ${getBadgeClass(
-              reminderStatus
-            )}`}
-          >
-            Reminder: {reminderStatus}
-          </span>
-        )}
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+                  Linked follow-up emails exist
+                </h2>
 
-        <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-xs text-slate-300">
-          Original: {item.status}
-        </span>
-      </div>
+                <p className="mt-2 text-sm leading-6 text-[#657187]">
+                  These original emails already have a linked follow-up email.
+                </p>
+              </div>
 
-      <h3 className="mt-3 text-lg font-semibold">{item.subject}</h3>
-
-      <p className="mt-1 text-sm text-slate-400">
-        {item.professors?.professor_name || "Unknown professor"} —{" "}
-        {item.professors?.email || "No email"}
-      </p>
-
-      <div className="mt-3 flex flex-wrap gap-2 text-xs">
-        {item.professors?.university && (
-          <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-300">
-            {item.professors.university}
-          </span>
-        )}
-
-        {item.professors?.category && (
-          <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-emerald-300">
-            {item.professors.category}
-          </span>
-        )}
-
-        {item.professors?.research_area && (
-          <span className="rounded-full bg-blue-400/10 px-3 py-1 text-blue-300">
-            {item.professors.research_area}
-          </span>
-        )}
-      </div>
-
-      <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-          <p className="text-xs text-slate-500">Original sent</p>
-          <p className="mt-1 text-slate-300">
-            {formatDateTime(item.sent_time)}
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-          <p className="text-xs text-slate-500">
-            {columnType === "reply_received" ? "Reply state" : "Reminder due"}
-          </p>
-          <p className="mt-1 text-slate-300">
-            {columnType === "reply_received"
-              ? "Reply received — use custom reply, undo, or close"
-              : dueDate
-              ? formatDateTime(dueDate.toISOString())
-              : "—"}
-          </p>
-        </div>
-      </div>
-
-      {item.followupEmails.length > 0 && (
-        <div className="mt-4 rounded-xl border border-purple-500/20 bg-purple-400/10 p-4">
-          <p className="text-sm font-semibold text-purple-200">
-            Linked follow-up email
-          </p>
-
-          {item.followupEmails.map((email) => (
-            <div key={email.id} className="mt-3 text-sm text-slate-300">
-              <span
-                className={`mr-2 rounded-full border px-2 py-0.5 text-xs ${getBadgeClass(
-                  email.status
-                )}`}
-              >
-                {email.status}
+              <span className="rounded-full bg-[#f4dceb] px-3 py-1 text-sm font-semibold text-[#171a21]">
+                {followupScheduledItems.length}
               </span>
-              {email.subject}
-              <p className="mt-1 text-xs text-slate-500">
-                Scheduled: {formatDateTime(email.send_datetime)} | Sent:{" "}
-                {formatDateTime(email.sent_time)}
-              </p>
             </div>
-          ))}
-        </div>
-      )}
 
-      {item.customReplyEmails.length > 0 && (
-        <div className="mt-4 rounded-xl border border-blue-500/20 bg-blue-400/10 p-4">
-          <p className="text-sm font-semibold text-blue-200">
-            Custom replies created
-          </p>
+            <div className="mt-6 space-y-4">
+              {followupScheduledItems.length === 0 ? (
+                <div className="rounded-[24px] border border-black/8 bg-[#f6f8fc] p-6 text-center">
+                  <p className="text-sm font-semibold text-[#171a21]">
+                    No follow-up emails scheduled
+                  </p>
 
-          {item.customReplyEmails.map((email) => (
-            <div key={email.id} className="mt-3 text-sm text-slate-300">
-              <span
-                className={`mr-2 rounded-full border px-2 py-0.5 text-xs ${getBadgeClass(
-                  email.status
-                )}`}
-              >
-                {email.status}
+                  <p className="mt-2 text-sm text-[#657187]">
+                    Schedule follow-ups from the no-reply section.
+                  </p>
+                </div>
+              ) : (
+                followupScheduledItems.map((item) => (
+                  <FollowupCard
+                    key={item.id}
+                    item={item}
+                    type="scheduled"
+                    onScheduleFollowup={openFollowupComposer}
+                    onPositiveReply={openPositiveReply}
+                    onRepliedReply={openRepliedReply}
+                    onRejected={(selected) =>
+                      updateOutcome(selected, "Rejected", true)
+                    }
+                    onClose={(selected) =>
+                      updateOutcome(selected, "Closed", true)
+                    }
+                    onUndoNoReply={markAsNoReply}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="soft-card bg-white p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="page-eyebrow">Reply received</p>
+
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+                  Replied, positive, rejected, or closed
+                </h2>
+
+                <p className="mt-2 text-sm leading-6 text-[#657187]">
+                  These contacts have been labeled as replied or completed.
+                </p>
+              </div>
+
+              <span className="rounded-full bg-[#dcf5e7] px-3 py-1 text-sm font-semibold text-[#171a21]">
+                {replyReceivedItems.length}
               </span>
-              {email.subject}
-              <p className="mt-1 text-xs text-slate-500">
-                Scheduled: {formatDateTime(email.send_datetime)} | Sent:{" "}
-                {formatDateTime(email.sent_time)}
-              </p>
             </div>
-          ))}
-        </div>
-      )}
 
-      <div className="mt-5 flex flex-wrap gap-2">
-        {columnType === "reply_received" && (
-          <button
-            onClick={() => onMarkNoReply(item)}
-            className="rounded-lg border border-yellow-700 px-3 py-2 text-xs text-yellow-300 hover:bg-yellow-950"
-          >
-            Undo → No Reply
-          </button>
-        )}
+            <div className="mt-6 space-y-4">
+              {replyReceivedItems.length === 0 ? (
+                <div className="rounded-[24px] border border-black/8 bg-[#f6f8fc] p-6 text-center">
+                  <p className="text-sm font-semibold text-[#171a21]">
+                    No replies marked yet
+                  </p>
 
-        {columnType === "no_reply" && (
-          <button
-            onClick={() => onScheduleFollowup(item)}
-            className="rounded-lg border border-orange-700 px-3 py-2 text-xs text-orange-300 hover:bg-orange-950"
-          >
-            Schedule Follow-up
-          </button>
-        )}
-
-        {(columnType === "reply_received" ||
-          columnType === "followup_scheduled") && (
-          <>
-            <button
-              onClick={() => onPositiveReply(item)}
-              className="rounded-lg border border-emerald-700 px-3 py-2 text-xs text-emerald-300 hover:bg-emerald-950"
-            >
-              Positive + Reply
-            </button>
-
-            <button
-              onClick={() => onRepliedReply(item)}
-              className="rounded-lg border border-cyan-700 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-950"
-            >
-              Replied + Reply
-            </button>
-          </>
-        )}
-
-        {columnType === "no_reply" && (
-          <button
-            onClick={() => onRepliedReply(item)}
-            className="rounded-lg border border-blue-700 px-3 py-2 text-xs text-blue-300 hover:bg-blue-950"
-          >
-            Custom Reply
-          </button>
-        )}
-
-        <button
-          onClick={() => onRepliedClose(item)}
-          className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-900"
-        >
-          Replied + Close
-        </button>
-
-        <button
-          onClick={() => onRejectedClose(item)}
-          className="rounded-lg border border-red-900/60 px-3 py-2 text-xs text-red-300 hover:bg-red-950"
-        >
-          Rejected + Close
-        </button>
-
-        <button
-          onClick={() => onClose(item)}
-          className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-900"
-        >
-          Close
-        </button>
-      </div>
-
-      <details className="mt-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
-        <summary className="cursor-pointer text-sm text-slate-300">
-          Preview original email body
-        </summary>
-
-        <pre className="mt-4 whitespace-pre-wrap text-sm text-slate-400">
-          {item.email_body}
-        </pre>
-      </details>
-    </article>
+                  <p className="mt-2 text-sm text-[#657187]">
+                    Mark replies from the no-reply or scheduled sections.
+                  </p>
+                </div>
+              ) : (
+                replyReceivedItems.map((item) => (
+                  <FollowupCard
+                    key={item.id}
+                    item={item}
+                    type="reply"
+                    onScheduleFollowup={openFollowupComposer}
+                    onPositiveReply={openPositiveReply}
+                    onRepliedReply={openRepliedReply}
+                    onRejected={(selected) =>
+                      updateOutcome(selected, "Rejected", true)
+                    }
+                    onClose={(selected) =>
+                      updateOutcome(selected, "Closed", true)
+                    }
+                    onUndoNoReply={markAsNoReply}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </section>
+      </section>
+    </AppShell>
   );
 }

@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import AppShell from "@/components/AppShell";
+import { OutlineIcon } from "@/components/OutlineIcon";
+import { supabase } from "@/lib/supabaseClient";
 
 type ResumeFile = {
   id: string;
@@ -35,16 +38,124 @@ function formatDateTime(value: string | null) {
   return date.toLocaleString();
 }
 
+function getFileKind(fileType: string | null, fileName: string) {
+  const lowerName = fileName.toLowerCase();
+
+  if (fileType?.includes("pdf") || lowerName.endsWith(".pdf")) {
+    return "PDF";
+  }
+
+  if (
+    fileType?.includes("word") ||
+    lowerName.endsWith(".doc") ||
+    lowerName.endsWith(".docx")
+  ) {
+    return "Word";
+  }
+
+  if (
+    fileType?.includes("image") ||
+    lowerName.endsWith(".png") ||
+    lowerName.endsWith(".jpg") ||
+    lowerName.endsWith(".jpeg")
+  ) {
+    return "Image";
+  }
+
+  return "File";
+}
+
+function FieldLabel({
+  title,
+  required,
+}: {
+  title: string;
+  required?: boolean;
+}) {
+  return (
+    <label className="label">
+      {title}
+      {required ? <span className="ml-1 text-red-500">*</span> : null}
+    </label>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  icon,
+  className,
+}: {
+  label: string;
+  value: string | number;
+  icon: "file" | "upload" | "attachment" | "database" | "search";
+  className: string;
+}) {
+  return (
+    <div className={`rounded-[24px] p-4 ${className}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="icon-box h-10 w-10 bg-white/85">
+          <OutlineIcon name={icon} className="h-4 w-4" />
+        </div>
+
+        <p className="text-2xl font-semibold text-[#171a21]">{value}</p>
+      </div>
+
+      <p className="mt-3 text-sm font-semibold text-[#171a21]">{label}</p>
+    </div>
+  );
+}
+
 export default function ResumesPage() {
   const router = useRouter();
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
   const [resumes, setResumes] = useState<ResumeFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
+
+  const [searchText, setSearchText] = useState("");
+
+  const filteredFiles = useMemo(() => {
+    const text = searchText.toLowerCase().trim();
+
+    if (!text) return resumes;
+
+    return resumes.filter((resume) => {
+      return (
+        resume.label.toLowerCase().includes(text) ||
+        resume.file_name.toLowerCase().includes(text) ||
+        resume.file_type?.toLowerCase().includes(text) ||
+        resume.file_path.toLowerCase().includes(text)
+      );
+    });
+  }, [resumes, searchText]);
+
+  const stats = useMemo(() => {
+    const totalBytes = resumes.reduce(
+      (sum, resume) => sum + (resume.file_size ?? 0),
+      0
+    );
+
+    const pdfCount = resumes.filter((resume) => {
+      return (
+        resume.file_type?.includes("pdf") ||
+        resume.file_name.toLowerCase().endsWith(".pdf")
+      );
+    }).length;
+
+    return {
+      total: resumes.length,
+      pdfCount,
+      totalSize: formatFileSize(totalBytes),
+      visible: filteredFiles.length,
+    };
+  }, [resumes, filteredFiles.length]);
 
   useEffect(() => {
     async function initialize() {
@@ -56,7 +167,9 @@ export default function ResumesPage() {
       }
 
       const currentUserId = data.session.user.id;
+
       setUserId(currentUserId);
+      setUserEmail(data.session.user.email ?? null);
 
       await loadResumes(currentUserId);
       setLoading(false);
@@ -91,7 +204,7 @@ export default function ResumesPage() {
       .replace(/[^a-zA-Z0-9._-]/g, "");
   }
 
-  async function handleUpload(e: React.FormEvent<HTMLFormElement>) {
+  async function handleUpload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (!userId) {
@@ -119,7 +232,7 @@ export default function ResumesPage() {
       const filePath = `${userId}/${timestamp}_${safeFileName}`;
 
       const { error: uploadError } = await supabase.storage
-         .from("Resumes")
+        .from("Resumes")
         .upload(filePath, selectedFile, {
           cacheControl: "3600",
           upsert: false,
@@ -129,8 +242,8 @@ export default function ResumesPage() {
         throw new Error("Storage upload failed: " + uploadError.message);
       }
 
-  const finalLabel =
-  selectedFile.name.replace(/\.[^/.]+$/, "") || "Uploaded file";
+      const finalLabel =
+        selectedFile.name.replace(/\.[^/.]+$/, "") || "Uploaded file";
 
       const { error: insertError } = await supabase.from("resume_files").insert({
         user_id: userId,
@@ -147,7 +260,10 @@ export default function ResumesPage() {
 
       setSelectedFile(null);
 
-      const fileInput = document.getElementById("file-upload") as HTMLInputElement | null;
+      const fileInput = document.getElementById(
+        "file-upload"
+      ) as HTMLInputElement | null;
+
       if (fileInput) fileInput.value = "";
 
       setMessage("File uploaded successfully.");
@@ -155,6 +271,7 @@ export default function ResumesPage() {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Something went wrong.";
+
       setMessage(errorMessage);
     } finally {
       setUploading(false);
@@ -163,7 +280,7 @@ export default function ResumesPage() {
 
   async function handleDelete(resume: ResumeFile) {
     const confirmed = window.confirm(
-      "Delete this file from MailMotive? This removes it from storage and from the resume list."
+      "Delete this file from MailMotive? This removes it from storage and from the file list."
     );
 
     if (!confirmed) return;
@@ -191,170 +308,345 @@ export default function ResumesPage() {
     await loadResumes();
   }
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    router.push("/login");
-  }
-
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
-        Loading files...
-      </main>
+      <AppShell activePage="files" email={userEmail}>
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <div className="soft-card bg-white p-8 text-center">
+            <div className="icon-box mx-auto h-12 w-12 bg-[#eef3d9]">
+              <OutlineIcon name="file" />
+            </div>
+
+            <p className="page-eyebrow mt-4">Files</p>
+
+            <h1 className="mt-2 text-2xl font-semibold text-black">
+              Loading attachments
+            </h1>
+
+            <p className="mt-3 text-sm text-[#657187]">
+              Fetching CVs, resumes, and saved outreach attachments.
+            </p>
+          </div>
+        </div>
+      </AppShell>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white p-8">
-      <div className="mx-auto max-w-6xl">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-6">
-          <div>
-            <h1 className="text-3xl font-bold">Resumes & Attachments</h1>
-            <p className="mt-2 text-slate-400">
-              Upload files once. Use clear file names like Hetavi Patel [DAS].pdf so they are easy to select later.
-            </p>
-          </div>
+    <AppShell activePage="files" email={userEmail}>
+      <header className="flex flex-wrap items-start justify-between gap-5">
+        <div>
+          <p className="page-eyebrow">Attachment library</p>
+          <h1 className="page-title mt-2">Files</h1>
+          <p className="page-description">
+            Upload and manage resumes, CVs, and other attachments once, then
+            reuse them while scheduling outreach emails.
+          </p>
+        </div>
 
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/dashboard"
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Dashboard
-            </Link>
+        <div className="flex gap-2">
+          <button
+            onClick={() => loadResumes()}
+            className="btn btn-light"
+            type="button"
+          >
+            <OutlineIcon name="refresh" className="mr-2 h-4 w-4" />
+            Refresh
+          </button>
 
-            <Link
-              href="/outreach/new"
-              className="rounded-xl bg-blue-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-blue-300"
-            >
-              New Outreach
-            </Link>
+          <Link href="/outreach/new" className="btn btn-dark">
+            <OutlineIcon name="compose" className="mr-2 h-4 w-4" />
+            New Outreach
+          </Link>
+        </div>
+      </header>
 
-            <Link
-              href="/emails"
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Emails
-            </Link>
+      <div className="mt-6 flex flex-wrap gap-2">
+        <span className="status-pill bg-[#eef3d9]">
+          {stats.total} total files
+        </span>
+        <span className="status-pill bg-[#dbe6ff]">
+          {stats.pdfCount} PDF files
+        </span>
+        <span className="status-pill bg-[#dcf5e7]">
+          {stats.totalSize} stored
+        </span>
+        <span className="status-pill bg-white/80">
+          {stats.visible} visible
+        </span>
+      </div>
 
-            <button
-              onClick={handleLogout}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Logout
-            </button>
-          </div>
-        </header>
+      {message ? (
+        <div
+          className={`mt-6 rounded-[22px] border p-4 ${
+            message.toLowerCase().includes("successfully") ||
+            message.toLowerCase().includes("deleted")
+              ? "border-green-200 bg-[#dcf5e7]"
+              : "border-red-200 bg-red-50"
+          }`}
+        >
+          <p className="text-sm font-semibold text-[#171a21]">{message}</p>
+        </div>
+      ) : null}
 
-        {message && (
-          <div className="mt-6 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-300">
-            {message}
-          </div>
-        )}
-
-        <section className="mt-8 grid gap-8 lg:grid-cols-[420px_1fr]">
+      <section className="mt-8 grid gap-5 xl:grid-cols-[0.82fr_1.18fr]">
+        <aside className="space-y-5">
           <form
             onSubmit={handleUpload}
-            className="rounded-2xl border border-slate-800 bg-slate-900 p-6"
+            className="soft-card bg-[rgba(243,248,255,0.76)] p-6"
           >
-            <h2 className="text-xl font-semibold">Upload file</h2>
-            <p className="mt-1 text-sm text-slate-400">
-              Use clear file names because MailMotive will use the file name as the display label.
-            </p>
-
-            <div className="mt-6 space-y-4">
-
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <label className="mb-1 block text-sm text-slate-300">
-                  File
-                </label>
-                <input
-                  id="file-upload"
-                  type="file"
-                  onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm outline-none focus:border-emerald-400"
-                />
-                <p className="mt-2 text-xs text-slate-500">
-                  Maximum file size: 10 MB. Smaller attachments are better for deliverability.
+                <p className="page-eyebrow">Upload</p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+                  Add a new file
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-[#657187]">
+                  Use clear file names so they are easy to select later while
+                  composing outreach.
                 </p>
               </div>
 
-              {selectedFile && (
-                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-300">
-                  <p>Selected: {selectedFile.name}</p>
-                  <p>Size: {formatFileSize(selectedFile.size)}</p>
-                  <p>Type: {selectedFile.type || "Unknown"}</p>
+              <div className="icon-box h-12 w-12 bg-[#eef3d9]">
+                <OutlineIcon name="upload" />
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <div>
+                <FieldLabel title="Choose file" required />
+
+                <input
+                  id="file-upload"
+                  type="file"
+                  onChange={(e) =>
+                    setSelectedFile(e.target.files?.[0] ?? null)
+                  }
+                  className="input"
+                />
+
+                <p className="help-text">
+                  Maximum file size: 10 MB. Smaller attachments are better for
+                  deliverability.
+                </p>
+              </div>
+
+              {selectedFile ? (
+                <div className="rounded-[22px] border border-black/8 bg-white p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="icon-box h-10 w-10 bg-[#dbe6ff]">
+                      <OutlineIcon name="file" className="h-4 w-4" />
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="break-words text-sm font-semibold text-[#171a21]">
+                        {selectedFile.name}
+                      </p>
+
+                      <p className="mt-1 text-xs text-[#657187]">
+                        {formatFileSize(selectedFile.size)} ·{" "}
+                        {selectedFile.type || "Unknown type"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-[22px] border border-dashed border-black/12 bg-white/70 p-5 text-center">
+                  <div className="icon-box mx-auto h-10 w-10 bg-white">
+                    <OutlineIcon name="attachment" className="h-4 w-4" />
+                  </div>
+
+                  <p className="mt-3 text-sm font-semibold text-[#171a21]">
+                    No file selected
+                  </p>
+
+                  <p className="mt-1 text-xs text-[#657187]">
+                    Select a CV, resume, or supporting document.
+                  </p>
                 </div>
               )}
 
               <button
                 disabled={uploading}
-                className="w-full rounded-xl bg-emerald-400 px-4 py-3 font-semibold text-slate-950 hover:bg-emerald-300 disabled:opacity-60"
+                className="btn btn-dark w-full disabled:cursor-not-allowed disabled:opacity-60"
+                type="submit"
               >
+                <OutlineIcon name="upload" className="mr-2 h-4 w-4" />
                 {uploading ? "Uploading..." : "Upload File"}
               </button>
             </div>
           </form>
 
-          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-            <h2 className="text-xl font-semibold">Saved files</h2>
-            <p className="mt-1 text-sm text-slate-400">
-              Total files: {resumes.length}
-            </p>
+          <div className="soft-card bg-white p-6">
+            <p className="page-eyebrow">Library overview</p>
 
-            <div className="mt-6 space-y-4">
-              {resumes.length === 0 ? (
-                <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-slate-400">
-                  No files uploaded yet.
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+              File status
+            </h2>
+
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <StatCard
+                label="Files"
+                value={stats.total}
+                icon="file"
+                className="bg-[#eef3d9]"
+              />
+
+              <StatCard
+                label="PDFs"
+                value={stats.pdfCount}
+                icon="attachment"
+                className="bg-[#dbe6ff]"
+              />
+
+              <StatCard
+                label="Stored"
+                value={stats.totalSize}
+                icon="database"
+                className="bg-[#dcf5e7]"
+              />
+
+              <StatCard
+                label="Visible"
+                value={stats.visible}
+                icon="search"
+                className="bg-[#f4dceb]"
+              />
+            </div>
+          </div>
+
+          <div className="soft-card bg-[#dcf5e7] p-5">
+            <div className="flex items-start gap-3">
+              <div className="icon-box h-10 w-10 bg-white/85">
+                <OutlineIcon name="check" className="h-4 w-4" />
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-[#171a21]">
+                  Naming tip
+                </p>
+                <p className="mt-2 text-sm leading-6 text-[#657187]">
+                  Use file names like{" "}
+                  <span className="font-semibold text-[#171a21]">
+                    Hetavi_Patel_CV_Data_Analytics.pdf
+                  </span>{" "}
+                  so you can quickly identify them in the outreach composer.
+                </p>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <section className="soft-card bg-white p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="page-eyebrow">Saved files</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+                Attachment list
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-[#657187]">
+                Showing {filteredFiles.length} of {resumes.length} uploaded
+                files.
+              </p>
+            </div>
+
+            <Link href="/outreach/new" className="btn btn-light">
+              <OutlineIcon name="compose" className="mr-2 h-4 w-4" />
+              Use in outreach
+            </Link>
+          </div>
+
+          <div className="mt-5">
+            <FieldLabel title="Search files" />
+            <input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              className="input"
+              placeholder="Search by label, file name, type, or path..."
+            />
+          </div>
+
+          <div className="mt-6 space-y-4">
+            {filteredFiles.length === 0 ? (
+              <div className="rounded-[24px] border border-black/8 bg-[#f6f8fc] p-8 text-center">
+                <div className="icon-box mx-auto h-12 w-12 bg-white">
+                  <OutlineIcon name="file" />
                 </div>
-              ) : (
-                resumes.map((resume) => (
-                  <article
-                    key={resume.id}
-                    className="rounded-xl border border-slate-800 bg-slate-950 p-4"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div>
-                        <h3 className="font-semibold">{resume.label}</h3>
-                        <p className="mt-1 text-sm text-slate-400">
-                          {resume.file_name}
-                        </p>
 
-                        <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                          <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-300">
-                            {formatFileSize(resume.file_size)}
-                          </span>
+                <p className="mt-4 text-sm font-semibold text-[#171a21]">
+                  No files found
+                </p>
 
-                          {resume.file_type && (
-                            <span className="rounded-full bg-blue-400/10 px-3 py-1 text-blue-300">
-                              {resume.file_type}
-                            </span>
-                          )}
-
-                          <span className="rounded-full bg-purple-400/10 px-3 py-1 text-purple-300">
-                            {formatDateTime(resume.created_at)}
-                          </span>
+                <p className="mt-2 text-sm text-[#657187]">
+                  Upload a file or clear your search filter.
+                </p>
+              </div>
+            ) : (
+              filteredFiles.map((resume) => (
+                <article
+                  key={resume.id}
+                  className="rounded-[26px] border border-black/8 bg-[#f9fbff] p-5"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start gap-4">
+                        <div className="icon-box h-12 w-12 shrink-0 bg-[#eef3d9]">
+                          <OutlineIcon name="file" />
                         </div>
 
-                        <p className="mt-3 break-all text-xs text-slate-600">
-                          Path: {resume.file_path}
-                        </p>
-                      </div>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-[#dbe6ff] px-3 py-1 text-xs font-semibold text-[#171a21]">
+                              {getFileKind(resume.file_type, resume.file_name)}
+                            </span>
 
-                      <button
-                        onClick={() => handleDelete(resume)}
-                        className="rounded-lg border border-red-900/60 px-3 py-2 text-xs text-red-300 hover:bg-red-950"
-                      >
-                        Delete
-                      </button>
+                            <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[#657187]">
+                              {formatFileSize(resume.file_size)}
+                            </span>
+
+                            <span className="rounded-full bg-[#dcf5e7] px-3 py-1 text-xs font-medium text-[#171a21]">
+                              {formatDateTime(resume.created_at)}
+                            </span>
+                          </div>
+
+                          <h3 className="mt-4 break-words text-lg font-semibold leading-7 text-[#171a21]">
+                            {resume.label}
+                          </h3>
+
+                          <p className="mt-1 break-words text-sm leading-6 text-[#657187]">
+                            {resume.file_name}
+                          </p>
+
+                          <p className="mt-3 break-all rounded-2xl bg-white p-3 text-xs leading-5 text-[#657187]">
+                            <span className="font-semibold text-[#171a21]">
+                              Storage path:
+                            </span>{" "}
+                            {resume.file_path}
+                          </p>
+
+                          {resume.file_type ? (
+                            <p className="mt-2 text-xs text-[#657187]">
+                              MIME type: {resume.file_type}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
                     </div>
-                  </article>
-                ))
-              )}
-            </div>
-          </section>
+
+                    <button
+                      onClick={() => handleDelete(resume)}
+                      className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
         </section>
-      </div>
-    </main>
+      </section>
+    </AppShell>
   );
 }

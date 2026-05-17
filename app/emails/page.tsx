@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import AppShell from "@/components/AppShell";
+import { OutlineIcon } from "@/components/OutlineIcon";
 
 type EmailMessage = {
   id: string;
@@ -64,7 +66,7 @@ function getTriggerDisplay(email: EmailMessage) {
   }
 
   if (email.status === "Scheduled") {
-    return "Waiting for 30-min registration trigger";
+    return "Waiting for registration";
   }
 
   if (email.status === "Cancelled") {
@@ -84,7 +86,7 @@ function getSentDisplay(email: EmailMessage) {
   }
 
   if (email.status === "Trigger Created") {
-    return "Waiting for scheduled send time";
+    return "Waiting for send time";
   }
 
   if (email.status === "Sending") {
@@ -102,38 +104,96 @@ function getSentDisplay(email: EmailMessage) {
   return "—";
 }
 
-function getStatusClass(status: string) {
+function getStatusStyle(status: string) {
   if (status === "Sent") {
-    return "bg-emerald-400/10 text-emerald-300 border-emerald-500/30";
-  }
-
-  if (status === "Failed") {
-    return "bg-red-400/10 text-red-300 border-red-500/30";
+    return "bg-[#dcf5e7] text-[#171a21] border-black/8";
   }
 
   if (status === "Scheduled") {
-    return "bg-blue-400/10 text-blue-300 border-blue-500/30";
+    return "bg-[#dbe6ff] text-[#171a21] border-black/8";
   }
 
   if (status === "Trigger Created") {
-    return "bg-purple-400/10 text-purple-300 border-purple-500/30";
+    return "bg-[#f4dceb] text-[#171a21] border-black/8";
   }
 
   if (status === "Sending") {
-    return "bg-yellow-400/10 text-yellow-300 border-yellow-500/30";
+    return "bg-[#eef3d9] text-[#171a21] border-black/8";
+  }
+
+  if (status === "Failed") {
+    return "bg-red-50 text-red-700 border-red-200";
   }
 
   if (status === "Quota Blocked" || status === "Manual Review") {
-    return "bg-orange-400/10 text-orange-300 border-orange-500/30";
+    return "bg-[#eee8df] text-[#171a21] border-black/8";
   }
 
-  return "bg-slate-800 text-slate-300 border-slate-700";
+  if (status === "Cancelled" || status === "Paused") {
+    return "bg-[#f6f8fc] text-[#657187] border-black/8";
+  }
+
+  return "bg-white text-[#171a21] border-black/8";
+}
+
+function getStatusIcon(status: string) {
+  if (status === "Sent") return "check";
+  if (status === "Scheduled") return "calendar";
+  if (status === "Trigger Created") return "gear";
+  if (status === "Sending") return "refresh";
+  if (status === "Failed") return "x";
+  if (status === "Quota Blocked" || status === "Manual Review") return "warning";
+  return "mail";
+}
+
+function StatBox({
+  label,
+  value,
+  icon,
+  className,
+}: {
+  label: string;
+  value: number;
+  icon: "calendar" | "gear" | "check" | "warning" | "mail";
+  className: string;
+}) {
+  return (
+    <div className={`rounded-[24px] p-4 ${className}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="icon-box h-10 w-10 bg-white/85">
+          <OutlineIcon name={icon} className="h-4 w-4" />
+        </div>
+
+        <p className="text-2xl font-semibold text-[#171a21]">{value}</p>
+      </div>
+
+      <p className="mt-3 text-sm font-semibold text-[#171a21]">{label}</p>
+    </div>
+  );
+}
+
+function InfoCell({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-black/8 bg-[#f6f8fc] p-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#657187]">
+        {label}
+      </p>
+      <p className="mt-1 text-sm leading-5 text-[#171a21]">{value}</p>
+    </div>
+  );
 }
 
 export default function EmailsPage() {
   const router = useRouter();
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [emails, setEmails] = useState<EmailMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -160,6 +220,27 @@ export default function EmailsPage() {
     });
   }, [emails, statusFilter, searchText]);
 
+  const stats = useMemo(() => {
+    const scheduled = emails.filter((email) => email.status === "Scheduled").length;
+    const triggerCreated = emails.filter(
+      (email) => email.status === "Trigger Created"
+    ).length;
+    const sent = emails.filter((email) => email.status === "Sent").length;
+    const attention = emails.filter((email) =>
+      ["Failed", "Quota Blocked", "Manual Review", "Auth Required"].includes(
+        email.status
+      )
+    ).length;
+
+    return {
+      scheduled,
+      triggerCreated,
+      sent,
+      attention,
+      active: scheduled + triggerCreated,
+    };
+  }, [emails]);
+
   useEffect(() => {
     async function initialize() {
       const { data } = await supabase.auth.getSession();
@@ -170,7 +251,9 @@ export default function EmailsPage() {
       }
 
       const currentUserId = data.session.user.id;
+
       setUserId(currentUserId);
+      setUserEmail(data.session.user.email ?? null);
 
       await loadEmails(currentUserId);
       setLoading(false);
@@ -225,7 +308,7 @@ export default function EmailsPage() {
 
   async function handleCancelEmail(email: EmailMessage) {
     const confirmed = window.confirm(
-      "Cancel this scheduled email? This only updates MailMotive status. If a Google trigger was already created, it may still run, but sendDueEmails will skip it because status will no longer be Trigger Created."
+      "Cancel this scheduled email? This updates the MailMotive status. If a Google trigger was already created, sendDueEmails should skip it because the status will no longer be Trigger Created."
     );
 
     if (!confirmed) return;
@@ -281,249 +364,370 @@ export default function EmailsPage() {
     await loadEmails();
   }
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    router.push("/login");
-  }
-
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
-        Loading emails...
-      </main>
+      <AppShell activePage="emails" email={userEmail}>
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <div className="soft-card bg-white p-8 text-center">
+            <div className="icon-box mx-auto h-12 w-12 bg-[#dbe6ff]">
+              <OutlineIcon name="mail" />
+            </div>
+            <p className="page-eyebrow mt-4">Emails</p>
+            <h1 className="mt-2 text-2xl font-semibold text-black">
+              Loading tracker
+            </h1>
+            <p className="mt-3 text-sm text-[#657187]">
+              Fetching scheduled, sent, and failed email records.
+            </p>
+          </div>
+        </div>
+      </AppShell>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white p-8">
-      <div className="mx-auto max-w-7xl">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-6">
-          <div>
-            <h1 className="text-3xl font-bold">Emails</h1>
-            <p className="mt-2 text-slate-400">
-              Track scheduled, trigger-created, sent, failed, and blocked
-              outreach emails.
-            </p>
-          </div>
+    <AppShell activePage="emails" email={userEmail}>
+      <header className="flex flex-wrap items-start justify-between gap-5">
+        <div>
+          <p className="page-eyebrow">Operations tracker</p>
+          <h1 className="page-title mt-2">Emails</h1>
+          <p className="page-description">
+            Track every outreach email from scheduling to trigger creation,
+            sending, delivery, failure, cancellation, and manual review.
+          </p>
+        </div>
 
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/dashboard"
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Dashboard
-            </Link>
-
-            <Link
-              href="/outreach/new"
-              className="rounded-xl bg-blue-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-blue-300"
-            >
-              New Outreach
-            </Link>
-
-            <Link
-              href="/professors"
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Professors
-            </Link>
-
-            <button
-              onClick={handleLogout}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
-            >
-              Logout
-            </button>
-          </div>
-        </header>
-
-        {message && (
-          <div className="mt-6 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-300">
-            {message}
-          </div>
-        )}
-
-        <section className="mt-8 grid gap-4 md:grid-cols-[1fr_240px_160px]">
-          <input
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-emerald-400"
-            placeholder="Search by professor, email, university, category, subject..."
-          />
-
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-emerald-400"
-          >
-            {STATUS_OPTIONS.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-
+        <div className="flex gap-2">
           <button
             onClick={() => loadEmails()}
-            className="rounded-xl bg-emerald-400 px-4 py-3 font-semibold text-slate-950 hover:bg-emerald-300"
+            className="btn btn-light"
+            type="button"
           >
+            <OutlineIcon name="refresh" className="mr-2 h-4 w-4" />
             Refresh
           </button>
-        </section>
 
-        <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6">
-          <div className="flex items-center justify-between gap-4">
+          <Link href="/outreach/new" className="btn btn-dark">
+            <OutlineIcon name="compose" className="mr-2 h-4 w-4" />
+            New Outreach
+          </Link>
+        </div>
+      </header>
+
+      <div className="mt-6 flex flex-wrap gap-2">
+        <span className="status-pill bg-[#dbe6ff]">
+          {emails.length} total emails
+        </span>
+        <span className="status-pill bg-[#dcf5e7]">
+          {stats.sent} sent
+        </span>
+        <span className="status-pill bg-[#f4dceb]">
+          {stats.active} active
+        </span>
+        <span className="status-pill bg-white/80">
+          {filteredEmails.length} visible
+        </span>
+      </div>
+
+      {message ? (
+        <div className="mt-6 rounded-[22px] border border-black/8 bg-white p-4">
+          <p className="text-sm font-semibold text-[#171a21]">{message}</p>
+        </div>
+      ) : null}
+
+      <section className="mt-8 grid gap-5 xl:grid-cols-[0.78fr_1.22fr]">
+        <aside className="space-y-5">
+          <div className="soft-card bg-white p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="page-eyebrow">Pipeline snapshot</p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+                  Current status
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-[#657187]">
+                  Compact overview of the email states that matter most.
+                </p>
+              </div>
+
+              <div className="icon-box h-12 w-12 bg-[#e5ebff]">
+                <OutlineIcon name="gear" />
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <StatBox
+                label="Scheduled"
+                value={stats.scheduled}
+                icon="calendar"
+                className="bg-[#dbe6ff]"
+              />
+
+              <StatBox
+                label="Ready"
+                value={stats.triggerCreated}
+                icon="gear"
+                className="bg-[#f4dceb]"
+              />
+
+              <StatBox
+                label="Sent"
+                value={stats.sent}
+                icon="check"
+                className="bg-[#dcf5e7]"
+              />
+
+              <StatBox
+                label="Attention"
+                value={stats.attention}
+                icon="warning"
+                className="bg-[#eee8df]"
+              />
+            </div>
+          </div>
+
+          <div className="soft-card bg-[rgba(243,248,255,0.76)] p-6">
+            <p className="page-eyebrow">Filters</p>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+              Find an email
+            </h2>
+
+            <div className="mt-5 space-y-4">
+              <div>
+                <label className="label">Search</label>
+                <input
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  className="input"
+                  placeholder="Professor, email, university, category, subject..."
+                />
+              </div>
+
+              <div>
+                <label className="label">Status</label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="select"
+                >
+                  {STATUS_OPTIONS.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                onClick={() => {
+                  setSearchText("");
+                  setStatusFilter("All");
+                }}
+                className="btn btn-light w-full"
+                type="button"
+              >
+                Clear filters
+              </button>
+            </div>
+          </div>
+
+          <div className="soft-card bg-[#dcf5e7] p-5">
+            <div className="flex items-start gap-3">
+              <div className="icon-box h-10 w-10 bg-white/85">
+                <OutlineIcon name="check" className="h-4 w-4" />
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-[#171a21]">
+                  Status flow
+                </p>
+                <p className="mt-2 text-sm leading-6 text-[#657187]">
+                  Scheduled → Trigger Created → Sending → Sent. Failed or
+                  blocked emails appear as attention items.
+                </p>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <section className="soft-card bg-white p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h2 className="text-xl font-semibold">Email List</h2>
-              <p className="mt-1 text-sm text-slate-400">
+              <p className="page-eyebrow">Email records</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#171a21]">
+                Delivery timeline
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-[#657187]">
                 Showing {filteredEmails.length} of {emails.length} emails.
               </p>
             </div>
+
+            <Link href="/followups" className="btn btn-light">
+              <OutlineIcon name="repeat" className="mr-2 h-4 w-4" />
+              Follow-ups
+            </Link>
           </div>
 
           <div className="mt-6 space-y-4">
             {filteredEmails.length === 0 ? (
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-slate-400">
-                No emails found.
+              <div className="rounded-[24px] border border-black/8 bg-[#f6f8fc] p-8 text-center">
+                <div className="icon-box mx-auto h-12 w-12 bg-white">
+                  <OutlineIcon name="mail" />
+                </div>
+
+                <p className="mt-4 text-sm font-semibold text-[#171a21]">
+                  No emails found
+                </p>
+
+                <p className="mt-2 text-sm text-[#657187]">
+                  Try clearing filters or create a new outreach email.
+                </p>
+
+                <Link href="/outreach/new" className="btn btn-dark mt-5">
+                  New Outreach
+                </Link>
               </div>
             ) : (
               filteredEmails.map((email) => (
                 <article
                   key={email.id}
-                  className="rounded-2xl border border-slate-800 bg-slate-950 p-5"
+                  className="rounded-[26px] border border-black/8 bg-[#f9fbff] p-5"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span
-                          className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClass(
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${getStatusStyle(
                             email.status
                           )}`}
                         >
+                          <OutlineIcon
+                            name={getStatusIcon(email.status)}
+                            className="h-3.5 w-3.5"
+                          />
                           {email.status}
                         </span>
 
-                        {email.followup_required && (
-                          <span className="rounded-full border border-cyan-500/30 bg-cyan-400/10 px-3 py-1 text-xs text-cyan-300">
+                        {email.followup_required ? (
+                          <span className="rounded-full border border-black/8 bg-[#dcf5e7] px-3 py-1 text-xs font-semibold text-[#171a21]">
                             Follow-up after {email.followup_after_days} days
                           </span>
-                        )}
+                        ) : null}
                       </div>
 
-                      <h3 className="mt-3 text-lg font-semibold">
+                      <h3 className="mt-4 break-words text-lg font-semibold leading-7 text-[#171a21]">
                         {email.subject}
                       </h3>
 
-                      <p className="mt-1 text-sm text-slate-400">
-                        {email.professors?.professor_name || "Unknown professor"}{" "}
-                        — {email.professors?.email || "No email"}
+                      <p className="mt-1 text-sm leading-6 text-[#657187]">
+                        {email.professors?.professor_name || "Unknown contact"}{" "}
+                        · {email.professors?.email || "No email"}
                       </p>
 
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                        {email.professors?.university && (
-                          <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-300">
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {email.professors?.university ? (
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[#657187]">
                             {email.professors.university}
                           </span>
-                        )}
+                        ) : null}
 
-                        {email.professors?.category && (
-                          <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-emerald-300">
+                        {email.professors?.category ? (
+                          <span className="rounded-full bg-[#dcf5e7] px-3 py-1 text-xs font-medium text-[#171a21]">
                             {email.professors.category}
                           </span>
-                        )}
+                        ) : null}
 
-                        {email.professors?.research_area && (
-                          <span className="rounded-full bg-blue-400/10 px-3 py-1 text-blue-300">
+                        {email.professors?.research_area ? (
+                          <span className="rounded-full bg-[#dbe6ff] px-3 py-1 text-xs font-medium text-[#171a21]">
                             {email.professors.research_area}
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </div>
 
                     <div className="flex flex-wrap gap-2">
                       {["Scheduled", "Trigger Created", "Quota Blocked"].includes(
                         email.status
-                      ) && (
+                      ) ? (
                         <button
                           onClick={() => handleCancelEmail(email)}
-                          className="rounded-lg border border-red-900/60 px-3 py-2 text-xs text-red-300 hover:bg-red-950"
+                          className="rounded-full border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                          type="button"
                         >
                           Cancel
                         </button>
-                      )}
+                      ) : null}
 
-                      {["Failed", "Quota Blocked"].includes(email.status) && (
+                      {["Failed", "Quota Blocked"].includes(email.status) ? (
                         <button
                           onClick={() => handleMarkManualReview(email)}
-                          className="rounded-lg border border-orange-700 px-3 py-2 text-xs text-orange-300 hover:bg-orange-950"
+                          className="rounded-full border border-black/8 bg-[#eee8df] px-3 py-2 text-xs font-semibold text-[#171a21] transition hover:bg-[#e4dbcf]"
+                          type="button"
                         >
                           Manual Review
                         </button>
-                      )}
+                      ) : null}
                     </div>
                   </div>
 
-                  <div className="mt-5 grid gap-3 text-sm md:grid-cols-2 lg:grid-cols-4">
-                    <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-                      <p className="text-xs text-slate-500">Scheduled</p>
-                      <p className="mt-1 text-slate-300">
-                        {formatDateTime(email.send_datetime)}
-                      </p>
-                    </div>
+                  <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <InfoCell
+                      label="Scheduled"
+                      value={formatDateTime(email.send_datetime)}
+                    />
 
-                    <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-                      <p className="text-xs text-slate-500">Trigger created</p>
-                      <p className="mt-1 text-slate-300">
-                          {getTriggerDisplay(email)}
-                      </p>
-                    </div>
+                    <InfoCell
+                      label="Trigger"
+                      value={getTriggerDisplay(email)}
+                    />
 
-                    <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-                      <p className="text-xs text-slate-500">Sent</p>
-                      <p className="mt-1 text-slate-300">
-                          {getSentDisplay(email)}
-                      </p>
-                    </div>
+                    <InfoCell
+                      label="Sent"
+                      value={getSentDisplay(email)}
+                    />
 
-                    <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-                      <p className="text-xs text-slate-500">Created</p>
-                      <p className="mt-1 text-slate-300">
-                        {formatDateTime(email.created_at)}
-                      </p>
-                    </div>
+                    <InfoCell
+                      label="Created"
+                      value={formatDateTime(email.created_at)}
+                    />
                   </div>
 
-                  {(email.trigger_note || email.blocked_reason || email.error) && (
-                    <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
-                      {email.trigger_note && (
-                        <p className="text-slate-400">
-                          <span className="text-slate-500">Trigger note:</span>{" "}
+                  {(email.trigger_note || email.blocked_reason || email.error) ? (
+                    <div className="mt-4 rounded-[22px] border border-black/8 bg-white p-4 text-sm">
+                      {email.trigger_note ? (
+                        <p className="text-[#657187]">
+                          <span className="font-semibold text-[#171a21]">
+                            Trigger note:
+                          </span>{" "}
                           {email.trigger_note}
                         </p>
-                      )}
+                      ) : null}
 
-                      {email.blocked_reason && (
-                        <p className="mt-2 text-orange-300">
-                          <span className="text-slate-500">Blocked:</span>{" "}
+                      {email.blocked_reason ? (
+                        <p className="mt-2 text-[#9a5c00]">
+                          <span className="font-semibold text-[#171a21]">
+                            Blocked:
+                          </span>{" "}
                           {email.blocked_reason}
                         </p>
-                      )}
+                      ) : null}
 
-                      {email.error && (
-                        <p className="mt-2 text-red-300">
-                          <span className="text-slate-500">Error:</span>{" "}
+                      {email.error ? (
+                        <p className="mt-2 text-red-700">
+                          <span className="font-semibold text-[#171a21]">
+                            Error:
+                          </span>{" "}
                           {email.error}
                         </p>
-                      )}
+                      ) : null}
                     </div>
-                  )}
+                  ) : null}
 
-                  <details className="mt-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
-                    <summary className="cursor-pointer text-sm text-slate-300">
+                  <details className="mt-4 rounded-[22px] border border-black/8 bg-white p-4">
+                    <summary className="cursor-pointer text-sm font-semibold text-[#171a21]">
                       Preview email body
                     </summary>
 
-                    <pre className="mt-4 whitespace-pre-wrap text-sm text-slate-400">
+                    <pre className="mt-4 max-h-72 overflow-auto whitespace-pre-wrap text-sm leading-6 text-[#657187]">
                       {email.email_body}
                     </pre>
                   </details>
@@ -532,7 +736,7 @@ export default function EmailsPage() {
             )}
           </div>
         </section>
-      </div>
-    </main>
+      </section>
+    </AppShell>
   );
 }
