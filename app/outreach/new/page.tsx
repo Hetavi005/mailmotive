@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -37,6 +38,20 @@ type ResumeFile = {
   file_type: string | null;
   file_size: number | null;
 };
+
+function normalizeText(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function makeShortLabel(value: string, fallback: string) {
+  const cleaned = value.trim().replace(/\s+/g, " ");
+
+  if (!cleaned) {
+    return fallback;
+  }
+
+  return cleaned.slice(0, 45);
+}
 
 export default function NewOutreachPage() {
   const router = useRouter();
@@ -136,7 +151,7 @@ export default function NewOutreachPage() {
       return;
     }
 
-    setProfessors(data ?? []);
+    setProfessors((data ?? []) as Professor[]);
   }
 
   async function loadSubjects(currentUserId: string) {
@@ -151,7 +166,7 @@ export default function NewOutreachPage() {
       return;
     }
 
-    setSubjects(data ?? []);
+    setSubjects((data ?? []) as SubjectVersion[]);
   }
 
   async function loadBodies(currentUserId: string) {
@@ -166,7 +181,7 @@ export default function NewOutreachPage() {
       return;
     }
 
-    setBodies(data ?? []);
+    setBodies((data ?? []) as BodyVersion[]);
   }
 
   async function loadResumes(currentUserId: string) {
@@ -181,7 +196,7 @@ export default function NewOutreachPage() {
       return;
     }
 
-    setResumes(data ?? []);
+    setResumes((data ?? []) as ResumeFile[]);
   }
 
   function updateProfessorForm(field: string, value: string) {
@@ -193,7 +208,10 @@ export default function NewOutreachPage() {
 
   function getMinimumSafeDate() {
     const now = new Date();
-    return new Date(now.getTime() + 5 * 60 * 1000);
+
+    // Apps Script registration trigger runs every 30 minutes.
+    // We keep a 35 minute buffer so the trigger has time to find the email.
+    return new Date(now.getTime() + 35 * 60 * 1000);
   }
 
   function getMinimumDatetimeLocal() {
@@ -209,6 +227,8 @@ export default function NewOutreachPage() {
   }
 
   function resetFormAfterSuccess() {
+    setProfessorMode("new");
+
     setProfessorForm({
       professor_name: "",
       email: "",
@@ -232,7 +252,120 @@ export default function NewOutreachPage() {
     setFollowupAfterDays("7");
   }
 
-  async function handleSchedule(e: React.FormEvent<HTMLFormElement>) {
+  async function getFinalSubject() {
+    if (selectedSubjectId !== "__new__") {
+      return selectedSubject?.subject ?? "";
+    }
+
+    const cleanSubjectText = newSubjectText.trim();
+
+    if (!cleanSubjectText) {
+      throw new Error("New subject text is required.");
+    }
+
+    const cleanSubjectLabel =
+      newSubjectLabel.trim() || makeShortLabel(cleanSubjectText, "Subject");
+
+    const existingSubject = subjects.find((item) => {
+      return (
+        normalizeText(item.label) === normalizeText(cleanSubjectLabel) &&
+        normalizeText(item.subject) === normalizeText(cleanSubjectText)
+      );
+    });
+
+    if (existingSubject) {
+      return existingSubject.subject;
+    }
+
+    const sameSubjectDifferentLabel = subjects.find((item) => {
+      return normalizeText(item.subject) === normalizeText(cleanSubjectText);
+    });
+
+    if (sameSubjectDifferentLabel) {
+      return sameSubjectDifferentLabel.subject;
+    }
+
+    const { data: subjectData, error: subjectError } = await supabase
+      .from("email_subject_versions")
+      .insert({
+        user_id: userId,
+        label: cleanSubjectLabel,
+        subject: cleanSubjectText,
+      })
+      .select("id,label,subject")
+      .single();
+
+    if (subjectError) {
+      // 23505 means Supabase found a duplicate.
+      // Since email_messages stores the final subject text directly,
+      // we can safely use the typed subject instead of failing the whole schedule.
+      if (subjectError.code === "23505") {
+        return cleanSubjectText;
+      }
+
+      throw new Error("Subject version insert failed: " + subjectError.message);
+    }
+
+    return subjectData.subject;
+  }
+
+  async function getFinalBody() {
+    if (selectedBodyId !== "__new__") {
+      return selectedBody?.email_body ?? "";
+    }
+
+    const cleanBodyText = newBodyText.trim();
+
+    if (!cleanBodyText) {
+      throw new Error("New email body is required.");
+    }
+
+    const cleanBodyLabel =
+      newBodyLabel.trim() || makeShortLabel(cleanBodyText, "Email body");
+
+    const existingBody = bodies.find((item) => {
+      return (
+        normalizeText(item.label) === normalizeText(cleanBodyLabel) &&
+        normalizeText(item.email_body) === normalizeText(cleanBodyText)
+      );
+    });
+
+    if (existingBody) {
+      return existingBody.email_body;
+    }
+
+    const sameBodyDifferentLabel = bodies.find((item) => {
+      return normalizeText(item.email_body) === normalizeText(cleanBodyText);
+    });
+
+    if (sameBodyDifferentLabel) {
+      return sameBodyDifferentLabel.email_body;
+    }
+
+    const { data: bodyData, error: bodyError } = await supabase
+      .from("email_body_versions")
+      .insert({
+        user_id: userId,
+        label: cleanBodyLabel,
+        email_body: cleanBodyText,
+      })
+      .select("id,label,email_body")
+      .single();
+
+    if (bodyError) {
+      // Same idea as subject versions.
+      // If duplicate exists, we still use the email body text.
+      if (bodyError.code === "23505") {
+        return cleanBodyText;
+      }
+
+      throw new Error("Email body version insert failed: " + bodyError.message);
+    }
+
+    return bodyData.email_body;
+  }
+
+  async function handleSchedule(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (!userId) {
@@ -282,85 +415,13 @@ export default function NewOutreachPage() {
         throw new Error("Please select or add a professor.");
       }
 
-      let finalSubject = selectedSubject?.subject ?? "";
-
-      if (selectedSubjectId === "__new__") {
-        if (!newSubjectText.trim()) {
-          throw new Error("New subject text is required.");
-        }
-
-        const subjectLabel =
-  newSubjectLabel.trim() || newSubjectText.trim().slice(0, 40);
-
-const existingSubject = subjects.find(
-  (item) =>
-    item.label.trim().toLowerCase() === subjectLabel.trim().toLowerCase() &&
-    item.subject.trim().toLowerCase() === newSubjectText.trim().toLowerCase()
-);
-
-if (existingSubject) {
-  finalSubject = existingSubject.subject;
-} else {
-  const { data: subjectData, error: subjectError } = await supabase
-    .from("email_subject_versions")
-    .insert({
-      user_id: userId,
-      label: subjectLabel,
-      subject: newSubjectText.trim(),
-    })
-    .select("id,label,subject")
-    .single();
-
-  if (subjectError) {
-    throw new Error("Subject version insert failed: " + subjectError.message);
-  }
-
-  finalSubject = subjectData.subject;
-}
-      }
+      const finalSubject = await getFinalSubject();
 
       if (!finalSubject.trim()) {
         throw new Error("Please select or add an email subject.");
       }
 
-      let finalBody = selectedBody?.email_body ?? "";
-
-      if (selectedBodyId === "__new__") {
-        if (!newBodyText.trim()) {
-          throw new Error("New email body is required.");
-        }
-
-        const bodyLabel =
-  newBodyLabel.trim() ||
-  newBodyText.trim().replace(/\s+/g, " ").slice(0, 45) ||
-  "Email body";
-
-const existingBody = bodies.find(
-  (item) =>
-    item.label.trim().toLowerCase() === bodyLabel.trim().toLowerCase() &&
-    item.email_body.trim().toLowerCase() === newBodyText.trim().toLowerCase()
-);
-
-if (existingBody) {
-  finalBody = existingBody.email_body;
-} else {
-  const { data: bodyData, error: bodyError } = await supabase
-    .from("email_body_versions")
-    .insert({
-      user_id: userId,
-      label: bodyLabel,
-      email_body: newBodyText.trim(),
-    })
-    .select("id,label,email_body")
-    .single();
-
-  if (bodyError) {
-    throw new Error("Email body version insert failed: " + bodyError.message);
-  }
-
-  finalBody = bodyData.email_body;
-}
-      }
+      const finalBody = await getFinalBody();
 
       if (!finalBody.trim()) {
         throw new Error("Please select or add an email body.");
@@ -394,13 +455,7 @@ if (existingBody) {
         );
       }
 
-      console.log("Creating email with:", {
-        user_id: userId,
-        professor_id: professorId,
-        subject: finalSubject.trim(),
-        send_datetime: scheduledDate.toISOString(),
-        status: "Scheduled",
-      });
+      const safeFollowupDays = Math.max(1, Number(followupAfterDays || "7"));
 
       const { data: emailData, error: emailError } = await supabase
         .from("email_messages")
@@ -412,12 +467,11 @@ if (existingBody) {
           send_datetime: scheduledDate.toISOString(),
           status: "Scheduled",
           followup_required: followupRequired,
-          followup_after_days: Number(followupAfterDays || "7"),
+          followup_after_days: safeFollowupDays,
+          email_kind: "initial",
         })
         .select("id")
         .single();
-
-      console.log("Email insert result:", { emailData, emailError });
 
       if (emailError) {
         throw new Error("Email insert failed: " + emailError.message);
@@ -683,8 +737,7 @@ if (existingBody) {
 
             {resumes.length === 0 && (
               <p className="mt-3 text-sm text-amber-300">
-                No resume files found yet. We will build upload/manage resume
-                page next.
+                No resume files found yet. Upload files from the Manage Files page.
               </p>
             )}
           </section>
