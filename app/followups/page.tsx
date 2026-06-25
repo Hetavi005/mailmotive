@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import type { ComponentProps, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import { OutlineIcon } from "@/components/OutlineIcon";
 import { supabase } from "@/lib/supabaseClient";
+
+type OutlineIconName = ComponentProps<typeof OutlineIcon>["name"];
 
 type ProfessorInfo = {
   professor_name: string;
@@ -60,6 +62,42 @@ type BoardItem = OriginalEmail & {
 
 type ComposerMode = "followup" | "custom_reply";
 
+const SEND_WINDOW_START_HOUR = 9;
+const SEND_WINDOW_END_HOUR = 15;
+const MINIMUM_BUFFER_MINUTES = 20;
+
+function getSendingWindowText() {
+  return "09:00 to 14:45";
+}
+
+function getMinimumSafeDate() {
+  const now = new Date();
+  return new Date(now.getTime() + MINIMUM_BUFFER_MINUTES * 60 * 1000);
+}
+
+function getMinimumDatetimeLocal() {
+  const minimum = getMinimumSafeDate();
+
+  const year = minimum.getFullYear();
+  const month = String(minimum.getMonth() + 1).padStart(2, "0");
+  const day = String(minimum.getDate()).padStart(2, "0");
+  const hours = String(minimum.getHours()).padStart(2, "0");
+  const minutes = String(minimum.getMinutes()).padStart(2, "0");
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function isInsideSendingWindow(date: Date) {
+  const hour = date.getHours();
+  const minutes = date.getMinutes();
+
+  const selectedMinutes = hour * 60 + minutes;
+  const startMinutes = SEND_WINDOW_START_HOUR * 60;
+  const endMinutes = SEND_WINDOW_END_HOUR * 60;
+
+  return selectedMinutes >= startMinutes && selectedMinutes < endMinutes;
+}
+
 function formatDateTime(value: string | null) {
   if (!value) return "—";
 
@@ -112,12 +150,14 @@ function getStatusClass(status: string) {
   if (status === "Sent") return "bg-[#dcf5e7] text-[#171a21]";
   if (status === "Scheduled") return "bg-[#dbe6ff] text-[#171a21]";
   if (status === "Trigger Created") return "bg-[#f4dceb] text-[#171a21]";
+  if (status === "Sending") return "bg-[#fff2d8] text-[#171a21]";
   if (status === "Failed") return "bg-red-50 text-red-700";
+  if (status === "Quota Blocked") return "bg-red-50 text-red-700";
 
   return "bg-white text-[#657187]";
 }
 
-function getStatusIcon(status: string) {
+function getStatusIcon(status: string): OutlineIconName {
   if (status === "Due") return "warning";
   if (status === "Upcoming") return "clock";
   if (status === "Positive") return "check";
@@ -126,8 +166,10 @@ function getStatusIcon(status: string) {
   if (status === "Closed") return "check";
   if (status === "Scheduled") return "calendar";
   if (status === "Trigger Created") return "gear";
+  if (status === "Sending") return "clock";
   if (status === "Sent") return "check";
   if (status === "Failed") return "warning";
+  if (status === "Quota Blocked") return "warning";
 
   return "repeat";
 }
@@ -188,11 +230,8 @@ function MiniEmailCard({
             email.status
           )}`}
         >
-          <OutlineIcon
-            name={getStatusIcon(email.status)}
-            className="h-3 w-3"
-          />
-          {email.status}
+          <OutlineIcon name={getStatusIcon(email.status)} className="h-3 w-3" />
+          {email.status === "Trigger Created" ? "Scheduled" : email.status}
         </span>
 
         <span className="rounded-full bg-[#f6f8fc] px-2.5 py-1 text-xs font-medium text-[#657187]">
@@ -628,24 +667,6 @@ export default function FollowupsPage() {
     setTemplates(data ?? []);
   }
 
-  function getMinimumSafeDate() {
-    const now = new Date();
-
-    return new Date(now.getTime() + 35 * 60 * 1000);
-  }
-
-  function getMinimumDatetimeLocal() {
-    const minimum = getMinimumSafeDate();
-
-    const year = minimum.getFullYear();
-    const month = String(minimum.getMonth() + 1).padStart(2, "0");
-    const day = String(minimum.getDate()).padStart(2, "0");
-    const hours = String(minimum.getHours()).padStart(2, "0");
-    const minutes = String(minimum.getMinutes()).padStart(2, "0");
-
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-  }
-
   async function addEvent(
     emailId: string,
     currentUserId: string,
@@ -853,13 +874,27 @@ export default function FollowupsPage() {
     if (scheduledDate < minimumSafeTime) {
       const warningMessage =
         "Invalid scheduled time.\n\n" +
-        "MailMotive checks new scheduled emails every 30 minutes.\n" +
-        "Please choose a send time at least 35 minutes from now.\n\n" +
+        "MailMotive checks due emails every 15 minutes.\n" +
+        `Please choose a send time at least ${MINIMUM_BUFFER_MINUTES} minutes from now.\n\n` +
         `Earliest safe time: ${minimumSafeTime.toLocaleString()}`;
 
       alert(warningMessage);
       setMessage(
         `Invalid scheduled time. Earliest safe time: ${minimumSafeTime.toLocaleString()}`
+      );
+      return;
+    }
+
+    if (!isInsideSendingWindow(scheduledDate)) {
+      const warningMessage =
+        "Invalid scheduled time.\n\n" +
+        "MailMotive only sends emails between 9:00 AM and 3:00 PM.\n" +
+        `Please choose a time from ${getSendingWindowText()}.\n\n` +
+        "The last safe time is 14:45 because 15:00 is outside the sending window.";
+
+      alert(warningMessage);
+      setMessage(
+        "Invalid scheduled time. Please choose a time between 9:00 AM and 2:45 PM."
       );
       return;
     }
@@ -918,7 +953,7 @@ export default function FollowupsPage() {
         composerMode === "followup"
           ? "Follow-up Scheduled"
           : "Custom Reply Scheduled",
-        `Created from original email ${activeEmail.id}.`
+        "Created from follow-up workflow. It will be picked by the recurring 15-minute scheduler."
       );
 
       await addEvent(
@@ -942,8 +977,8 @@ export default function FollowupsPage() {
 
       setMessage(
         composerMode === "followup"
-          ? "Follow-up email scheduled successfully."
-          : "Custom reply scheduled successfully."
+          ? "Follow-up email scheduled successfully. MailMotive will send it between 9:00 AM and 3:00 PM when the scheduled time arrives."
+          : "Custom reply scheduled successfully. MailMotive will send it between 9:00 AM and 3:00 PM when the scheduled time arrives."
       );
 
       closeComposer();
@@ -1030,6 +1065,8 @@ export default function FollowupsPage() {
         <span className="status-pill bg-[#dcf5e7]">
           {replyReceivedItems.length} replied
         </span>
+        <span className="status-pill bg-white/80">20 min safety buffer</span>
+        <span className="status-pill bg-white/80">9 AM - 3 PM window</span>
       </div>
 
       {message ? (
@@ -1137,8 +1174,9 @@ export default function FollowupsPage() {
 
                 <p className="mt-2 text-sm leading-6 text-[#657187]">
                   Follow-up required means reminder active. A follow-up is only
-                  “scheduled” when a linked email exists with email_kind =
-                  followup.
+                  scheduled when a linked email exists with email_kind =
+                  followup. MailMotive now uses one recurring 15-minute
+                  scheduler, not one trigger per email.
                 </p>
               </div>
             </div>
@@ -1237,7 +1275,9 @@ export default function FollowupsPage() {
                   />
 
                   <p className="help-text">
-                    Choose at least 35 minutes from now.
+                    Choose a time from {getSendingWindowText()}, at least{" "}
+                    {MINIMUM_BUFFER_MINUTES} minutes from now. MailMotive checks
+                    due emails every 15 minutes.
                   </p>
                 </div>
 

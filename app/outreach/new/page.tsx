@@ -41,6 +41,10 @@ type ResumeFile = {
   file_size: number | null;
 };
 
+const SEND_WINDOW_START_HOUR = 9;
+const SEND_WINDOW_END_HOUR = 15;
+const MINIMUM_BUFFER_MINUTES = 20;
+
 function normalizeText(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -53,6 +57,38 @@ function makeShortLabel(value: string, fallback: string) {
   }
 
   return cleaned.slice(0, 45);
+}
+
+function getSendingWindowText() {
+  return "09:00 to 14:45";
+}
+
+function getMinimumSafeDate() {
+  const now = new Date();
+  return new Date(now.getTime() + MINIMUM_BUFFER_MINUTES * 60 * 1000);
+}
+
+function getMinimumDatetimeLocal() {
+  const minimum = getMinimumSafeDate();
+
+  const year = minimum.getFullYear();
+  const month = String(minimum.getMonth() + 1).padStart(2, "0");
+  const day = String(minimum.getDate()).padStart(2, "0");
+  const hours = String(minimum.getHours()).padStart(2, "0");
+  const minutes = String(minimum.getMinutes()).padStart(2, "0");
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function isInsideSendingWindow(date: Date) {
+  const hour = date.getHours();
+  const minutes = date.getMinutes();
+
+  const selectedMinutes = hour * 60 + minutes;
+  const startMinutes = SEND_WINDOW_START_HOUR * 60;
+  const endMinutes = SEND_WINDOW_END_HOUR * 60;
+
+  return selectedMinutes >= startMinutes && selectedMinutes < endMinutes;
 }
 
 function FieldLabel({
@@ -295,23 +331,6 @@ export default function NewOutreachPage() {
     }));
   }
 
-  function getMinimumSafeDate() {
-    const now = new Date();
-    return new Date(now.getTime() + 35 * 60 * 1000);
-  }
-
-  function getMinimumDatetimeLocal() {
-    const minimum = getMinimumSafeDate();
-
-    const year = minimum.getFullYear();
-    const month = String(minimum.getMonth() + 1).padStart(2, "0");
-    const day = String(minimum.getDate()).padStart(2, "0");
-    const hours = String(minimum.getHours()).padStart(2, "0");
-    const minutes = String(minimum.getMinutes()).padStart(2, "0");
-
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-  }
-
   function resetFormAfterSuccess() {
     setProfessorMode("new");
 
@@ -525,14 +544,28 @@ export default function NewOutreachPage() {
       if (scheduledDate < minimumSafeTime) {
         const warningMessage =
           "Invalid scheduled time.\n\n" +
-          "MailMotive checks new scheduled emails every 30 minutes.\n" +
-          "Please choose a send time at least 35 minutes from now.\n\n" +
+          "MailMotive checks due emails every 15 minutes.\n" +
+          `Please choose a send time at least ${MINIMUM_BUFFER_MINUTES} minutes from now.\n\n` +
           `Earliest safe time: ${minimumSafeTime.toLocaleString()}`;
 
         alert(warningMessage);
 
         throw new Error(
           `Invalid scheduled time. Earliest safe time: ${minimumSafeTime.toLocaleString()}`
+        );
+      }
+
+      if (!isInsideSendingWindow(scheduledDate)) {
+        const warningMessage =
+          "Invalid scheduled time.\n\n" +
+          "MailMotive only sends emails between 9:00 AM and 3:00 PM.\n" +
+          `Please choose a time from ${getSendingWindowText()}.\n\n` +
+          "The last safe time is 14:45 because 15:00 is outside the sending window.";
+
+        alert(warningMessage);
+
+        throw new Error(
+          "Invalid scheduled time. Please choose a time between 9:00 AM and 2:45 PM."
         );
       }
 
@@ -583,7 +616,8 @@ export default function NewOutreachPage() {
         user_id: userId,
         email_message_id: emailData.id,
         event_type: "Scheduled",
-        event_note: "Email scheduled from MailMotive outreach composer.",
+        event_note:
+          "Email scheduled from MailMotive outreach composer. It will be picked by the recurring 15-minute scheduler.",
       });
 
       if (eventError) {
@@ -593,7 +627,7 @@ export default function NewOutreachPage() {
       }
 
       setMessage(
-        "Outreach scheduled successfully. Apps Script will register the Gmail trigger within 30 minutes."
+        "Outreach scheduled successfully. MailMotive will send it between 9:00 AM and 3:00 PM when the scheduled time arrives."
       );
 
       resetFormAfterSuccess();
@@ -663,9 +697,10 @@ export default function NewOutreachPage() {
 
       <div className="mt-6 flex flex-wrap gap-2">
         <span className="status-pill bg-[#dbe6ff]">Step-by-step composer</span>
-        <span className="status-pill bg-[#dcf5e7]">Gmail send automation</span>
+        <span className="status-pill bg-[#dcf5e7]">Gmail automation</span>
         <span className="status-pill bg-[#f4dceb]">Reusable templates</span>
-        <span className="status-pill bg-white/80">35 min safety buffer</span>
+        <span className="status-pill bg-white/80">20 min safety buffer</span>
+        <span className="status-pill bg-white/80">9 AM - 3 PM window</span>
       </div>
 
       {message ? (
@@ -1006,7 +1041,7 @@ export default function NewOutreachPage() {
             <StepCard
               number="5"
               title="Schedule"
-              description="Choose when the email should be sent. Keep at least 35 minutes buffer for trigger registration."
+              description="Choose when the email should be sent. MailMotive sends between 9:00 AM and 3:00 PM with a 20-minute safety buffer."
               icon="clock"
             >
               <div className="grid gap-4 md:grid-cols-2">
@@ -1021,8 +1056,9 @@ export default function NewOutreachPage() {
                     className="input"
                   />
                   <p className="help-text">
-                    Choose at least 35 minutes from now because the registration
-                    trigger runs every 30 minutes.
+                    Choose a time from {getSendingWindowText()}, at least{" "}
+                    {MINIMUM_BUFFER_MINUTES} minutes from now. MailMotive checks
+                    due emails every 15 minutes.
                   </p>
                 </div>
 
@@ -1097,7 +1133,8 @@ export default function NewOutreachPage() {
                       Schedule rule
                     </p>
                     <p className="mt-1 text-xs leading-5 text-[#657187]">
-                      Minimum safe time is 35 minutes from now.
+                      Send time must be between {getSendingWindowText()} and at
+                      least {MINIMUM_BUFFER_MINUTES} minutes from now.
                     </p>
                   </div>
                 </div>
@@ -1123,9 +1160,9 @@ export default function NewOutreachPage() {
                     What happens after saving?
                   </p>
                   <p className="mt-2 text-sm leading-6 text-[#657187]">
-                    MailMotive saves the email as Scheduled. Apps Script checks
-                    Supabase, creates a one-time Gmail trigger, sends the email,
-                    and updates the status.
+                    MailMotive saves the email as Scheduled. Apps Script uses one
+                    recurring 15-minute trigger to check Supabase, send due
+                    emails during the sending window, and update the status.
                   </p>
                 </div>
               </div>

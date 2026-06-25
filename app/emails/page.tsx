@@ -60,17 +60,25 @@ function formatDateTime(value: string | null) {
   return date.toLocaleString();
 }
 
-function getTriggerDisplay(email: EmailMessage) {
-  if (email.trigger_created_at) {
-    return formatDateTime(email.trigger_created_at);
+function getSchedulerDisplay(email: EmailMessage) {
+  if (email.status === "Scheduled") {
+    return "Waiting for recurring scheduler";
   }
 
-  if (email.status === "Scheduled") {
-    return "Waiting for registration";
+  if (email.status === "Trigger Created") {
+    return "Legacy trigger status";
+  }
+
+  if (email.status === "Sending") {
+    return "Picked by scheduler";
   }
 
   if (email.status === "Cancelled") {
-    return "Cancelled before trigger";
+    return "Cancelled before sending";
+  }
+
+  if (email.trigger_created_at) {
+    return "Legacy trigger: " + formatDateTime(email.trigger_created_at);
   }
 
   return "—";
@@ -86,7 +94,7 @@ function getSentDisplay(email: EmailMessage) {
   }
 
   if (email.status === "Trigger Created") {
-    return "Waiting for send time";
+    return "Waiting for recurring scheduler";
   }
 
   if (email.status === "Sending") {
@@ -136,10 +144,18 @@ function getStatusStyle(status: string) {
   return "bg-white text-[#171a21] border-black/8";
 }
 
+function getDisplayStatus(status: string) {
+  if (status === "Trigger Created") {
+    return "Scheduled";
+  }
+
+  return status;
+}
+
 function getStatusIcon(status: string) {
   if (status === "Sent") return "check";
   if (status === "Scheduled") return "calendar";
-  if (status === "Trigger Created") return "gear";
+  if (status === "Trigger Created") return "calendar";
   if (status === "Sending") return "refresh";
   if (status === "Failed") return "x";
   if (status === "Quota Blocked" || status === "Manual Review") return "warning";
@@ -221,11 +237,14 @@ export default function EmailsPage() {
   }, [emails, statusFilter, searchText]);
 
   const stats = useMemo(() => {
-    const scheduled = emails.filter((email) => email.status === "Scheduled").length;
-    const triggerCreated = emails.filter(
-      (email) => email.status === "Trigger Created"
+    const scheduled = emails.filter((email) =>
+      ["Scheduled", "Trigger Created"].includes(email.status)
     ).length;
+
+    const sending = emails.filter((email) => email.status === "Sending").length;
+
     const sent = emails.filter((email) => email.status === "Sent").length;
+
     const attention = emails.filter((email) =>
       ["Failed", "Quota Blocked", "Manual Review", "Auth Required"].includes(
         email.status
@@ -234,10 +253,10 @@ export default function EmailsPage() {
 
     return {
       scheduled,
-      triggerCreated,
+      sending,
       sent,
       attention,
-      active: scheduled + triggerCreated,
+      active: scheduled + sending,
     };
   }, [emails]);
 
@@ -308,7 +327,7 @@ export default function EmailsPage() {
 
   async function handleCancelEmail(email: EmailMessage) {
     const confirmed = window.confirm(
-      "Cancel this scheduled email? This updates the MailMotive status. If a Google trigger was already created, sendDueEmails should skip it because the status will no longer be Trigger Created."
+      "Cancel this scheduled email? MailMotive's recurring scheduler will skip it because the status will no longer be Scheduled."
     );
 
     if (!confirmed) return;
@@ -392,8 +411,8 @@ export default function EmailsPage() {
           <p className="page-eyebrow">Operations tracker</p>
           <h1 className="page-title mt-2">Emails</h1>
           <p className="page-description">
-            Track every outreach email from scheduling to trigger creation,
-            sending, delivery, failure, cancellation, and manual review.
+            Track every outreach email from scheduling to recurring scheduler
+            pickup, sending, delivery, failure, cancellation, and manual review.
           </p>
         </div>
 
@@ -418,9 +437,7 @@ export default function EmailsPage() {
         <span className="status-pill bg-[#dbe6ff]">
           {emails.length} total emails
         </span>
-        <span className="status-pill bg-[#dcf5e7]">
-          {stats.sent} sent
-        </span>
+        <span className="status-pill bg-[#dcf5e7]">{stats.sent} sent</span>
         <span className="status-pill bg-[#f4dceb]">
           {stats.active} active
         </span>
@@ -463,8 +480,8 @@ export default function EmailsPage() {
               />
 
               <StatBox
-                label="Ready"
-                value={stats.triggerCreated}
+                label="Sending"
+                value={stats.sending}
                 icon="gear"
                 className="bg-[#f4dceb]"
               />
@@ -541,8 +558,9 @@ export default function EmailsPage() {
                   Status flow
                 </p>
                 <p className="mt-2 text-sm leading-6 text-[#657187]">
-                  Scheduled → Trigger Created → Sending → Sent. Failed or
-                  blocked emails appear as attention items.
+                  Scheduled → Sending → Sent. Failed or blocked emails appear as
+                  attention items. Old Trigger Created rows are shown as legacy
+                  scheduled items.
                 </p>
               </div>
             </div>
@@ -604,8 +622,14 @@ export default function EmailsPage() {
                             name={getStatusIcon(email.status)}
                             className="h-3.5 w-3.5"
                           />
-                          {email.status}
+                          {getDisplayStatus(email.status)}
                         </span>
+
+                        {email.status === "Trigger Created" ? (
+                          <span className="rounded-full border border-black/8 bg-white px-3 py-1 text-xs font-semibold text-[#657187]">
+                            Legacy status
+                          </span>
+                        ) : null}
 
                         {email.followup_required ? (
                           <span className="rounded-full border border-black/8 bg-[#dcf5e7] px-3 py-1 text-xs font-semibold text-[#171a21]">
@@ -676,14 +700,11 @@ export default function EmailsPage() {
                     />
 
                     <InfoCell
-                      label="Trigger"
-                      value={getTriggerDisplay(email)}
+                      label="Scheduler"
+                      value={getSchedulerDisplay(email)}
                     />
 
-                    <InfoCell
-                      label="Sent"
-                      value={getSentDisplay(email)}
-                    />
+                    <InfoCell label="Sent" value={getSentDisplay(email)} />
 
                     <InfoCell
                       label="Created"
@@ -691,12 +712,12 @@ export default function EmailsPage() {
                     />
                   </div>
 
-                  {(email.trigger_note || email.blocked_reason || email.error) ? (
+                  {email.trigger_note || email.blocked_reason || email.error ? (
                     <div className="mt-4 rounded-[22px] border border-black/8 bg-white p-4 text-sm">
                       {email.trigger_note ? (
                         <p className="text-[#657187]">
                           <span className="font-semibold text-[#171a21]">
-                            Trigger note:
+                            Scheduler note:
                           </span>{" "}
                           {email.trigger_note}
                         </p>
